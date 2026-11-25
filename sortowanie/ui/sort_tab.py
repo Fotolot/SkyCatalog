@@ -9,19 +9,22 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGridLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
+                               QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
                                QRadioButton, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from .. import catalog as cat
 from .. import core
+from ..cards import Card, CardWatcher
 from .. import planner as pl
 from ..config import Settings
 from ..geo import DecisionStore, LocationService, OsmCache, Place, SOURCE_DECISION, SOURCE_NONE
 from ..media import MediaGroup, scan_source
 from ..osm import ATTRIBUTION, ATTRIBUTION_URL, TownResult
-from .common import DateField, Poster, files_word, groups_word, human_size, plain_label
+from .common import (DateField, Poster, files_word, flow, groups_word, human_size, plain_label, scrollable, shrinkable,
+                     splitter)
 
 NO_CATEGORY = None
 SCOPE_ALL, SCOPE_SELECTED = "all", "selected"
@@ -119,6 +122,13 @@ class SortTab(QWidget):
         self.target.textChanged.connect(self._on_target_changed)
         self._sync_form()
         self._refresh_undo_button()
+        self.all_groups: list[MediaGroup] = []
+        self.imported_keys: set[str] = set()
+        self.card_watcher = CardWatcher()
+        self._card_timer = QTimer(self, interval=3000, timeout=self._poll_cards)
+        self._card_timer.start()
+        QTimer.singleShot(1500, self._offer_present_cards)
+        self._on_mode_changed()
 
     # ══ Budowa ═════════════════════════════════════════════════
     def _build(self) -> None:
@@ -139,6 +149,33 @@ class SortTab(QWidget):
         fl.addWidget(QLabel("Archiwum (folder docelowy):"), 1, 0)
         fl.addWidget(self.target, 1, 1)
         fl.addWidget(b_tgt, 1, 2)
+        self.mode_move = QRadioButton("Przenieś pliki")
+        self.mode_copy = QRadioButton("Kopiuj (oryginały zostają na karcie / w folderze importu)")
+        self.mode_group = QButtonGroup(self)
+        self.mode_group.addButton(self.mode_move)
+        self.mode_group.addButton(self.mode_copy)
+        (self.mode_copy if self.settings.get("import_mode") == core.MODE_COPY else self.mode_move).setChecked(True)
+        self.mode_copy.toggled.connect(lambda _c: self._on_mode_changed())
+        self.show_imported = QCheckBox("Pokaż także materiały już zaimportowane")
+        self.show_imported.toggled.connect(lambda _c: self._apply_imported_filter())
+        fl.addWidget(flow(QLabel("Tryb:"), self.mode_move, self.mode_copy, self.show_imported), 2, 0, 1, 4)
+
+        # Pasek wykrytej karty pamięci
+        self.card_banner = QFrame(self)
+        self.card_banner.setFrameShape(QFrame.Shape.StyledPanel)
+        self.card_banner.setStyleSheet("QFrame { background: palette(alternate-base); border: 1px solid palette(highlight); "
+                                       "border-radius: 4px; }")
+        cb_lay = QHBoxLayout(self.card_banner)
+        self.card_label = plain_label("", wrap=True)
+        self.card_import_btn = QPushButton("Importuj z karty")
+        self.card_import_btn.clicked.connect(self._import_card)
+        card_ignore = QPushButton("Ignoruj")
+        card_ignore.clicked.connect(self.card_banner.hide)
+        cb_lay.addWidget(self.card_label, 1)
+        cb_lay.addWidget(self.card_import_btn)
+        cb_lay.addWidget(card_ignore)
+        self.card_banner.hide()
+        self._card: Card | None = None
 
         # Lista grup
         left = QGroupBox("Materiały z importu", self)
@@ -158,13 +195,8 @@ class SortTab(QWidget):
         self.geo_status = plain_label("", wrap=True, hint=True)
         ll = QVBoxLayout(left)
         ll.addWidget(self.tree, 1)
-        row = QHBoxLayout()
-        row.addWidget(b_all)
-        row.addWidget(b_un)
-        row.addStretch(1)
-        row.addWidget(self.retry_btn)
-        ll.addLayout(row)
-        ll.addWidget(self.geo_status)
+        ll.addWidget(flow(b_all, b_un, self.retry_btn))
+        ll.addWidget(shrinkable(self.geo_status))
 
         # Kategoria
         catbox = QGroupBox("Kategoria lotu (wybierz ręcznie)", self)
@@ -207,7 +239,7 @@ class SortTab(QWidget):
         self.forms.addWidget(self._build_detail())
 
         # Podgląd
-        prev = QGroupBox("Podgląd docelowej struktury folderów", self)
+        prev = QGroupBox("Podgląd struktury folderów", self)
         self.preview = QTreeWidget()
         self.preview.setHeaderLabels(["Folder", "Zawartość"])
         self.preview.setColumnWidth(0, 300)
@@ -216,21 +248,12 @@ class SortTab(QWidget):
         pl_.addWidget(self.preview, 1)
         pl_.addWidget(self.errors_label)
 
-        right = QWidget(self)
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(catbox)
-        rl.addWidget(self.form_box)
-        rl.addWidget(prev, 1)
+        # Każdy panel można poszerzać/zwężać przeciągając uchwyty; za mało miejsca = pasek przewijania
+        right = splitter(Qt.Orientation.Vertical, "sort_right", scrollable(catbox), scrollable(self.form_box), prev,
+                         sizes=[190, 260, 260], stretch=[0, 1, 1])
+        split = splitter(Qt.Orientation.Horizontal, "sort_columns", left, right,
+                         sizes=[760, 540], stretch=[3, 2])
 
-        split = QSplitter(Qt.Orientation.Horizontal, self)
-        split.addWidget(left)
-        split.addWidget(right)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setSizes([760, 540])
-
-        bottom = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.undo_btn = QPushButton("Cofnij ostatni import")
@@ -238,22 +261,25 @@ class SortTab(QWidget):
         self.move_btn = QPushButton("Przenieś materiały")
         self.move_btn.setEnabled(False)
         self.move_btn.clicked.connect(self._move)
+        self.progress.setMinimumWidth(60)
+        bottom = QHBoxLayout()
         bottom.addWidget(self.progress, 1)
-        bottom.addWidget(self.undo_btn)
-        bottom.addWidget(self.move_btn)
+        bottom.addWidget(flow(self.undo_btn, self.move_btn), 0)
         status_row = QHBoxLayout()
-        self.status = plain_label("Wybierz folder importu (np. kartę pamięci) i kliknij „Wczytaj”.")
-        self.net_status = plain_label("", hint=True)
-        credit = QLabel(f'Dane lokalizacji: <a href="{ATTRIBUTION_URL}">{ATTRIBUTION}</a>')
+        self.status = shrinkable(plain_label("Wybierz folder importu (np. kartę pamięci) i kliknij „Wczytaj”."))
+        self.net_status = shrinkable(plain_label("", hint=True))
+        credit = shrinkable(QLabel(f'Dane lokalizacji: <a href="{ATTRIBUTION_URL}">{ATTRIBUTION}</a>'))
         credit.setOpenExternalLinks(True)
-        status_row.addWidget(self.status, 1)
-        status_row.addWidget(self.net_status)
-        status_row.addWidget(credit)
+        credit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 3)
+        status_row.addWidget(self.net_status, 1)
+        status_row.addWidget(credit, 2)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
-        lay.addWidget(folders)
-        lay.addWidget(split, 1)
+        lay.addWidget(self.card_banner)
+        lay.addWidget(splitter(Qt.Orientation.Vertical, "sort_main", scrollable(folders), split,
+                               sizes=[130, 700], stretch=[0, 1]), 1)
         lay.addLayout(bottom)
         lay.addLayout(status_row)
         QShortcut(QKeySequence.StandardKey.SelectAll, self.tree, activated=self.tree.selectAll)
@@ -261,6 +287,7 @@ class SortTab(QWidget):
     def _build_hobby(self) -> QWidget:
         w = QWidget()
         f = QFormLayout(w)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         f.addRow(plain_label("Miejscowość i pobliski obiekt są rozpoznawane z GPS każdego materiału osobno. "
                              "Jeśli w promieniu nie ma charakterystycznego obiektu, jego poziom jest pomijany.\n"
                              "Struktura: Hobby / Miejscowość / [Obiekt] / WIDEO | Zdjęcia", wrap=True, hint=True))
@@ -304,6 +331,7 @@ class SortTab(QWidget):
     def _build_detail(self) -> QWidget:
         w = QWidget()
         f = QFormLayout(w)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.existing_label = QLabel("Dołącz do istniejącego:")
         self.existing_combo = QComboBox()
         self.existing_combo.activated.connect(self._on_existing_selected)
@@ -372,15 +400,34 @@ class SortTab(QWidget):
     def _scan_worker(self, import_id: int, source: str) -> None:
         try:
             groups = scan_source(source, lambda i, n: self.poster.post(("scan_progress", import_id, i, n)))
-            self.poster.post(("scanned", import_id, groups, None))
+            imported = self._find_imported(groups, source)
+            self.poster.post(("scanned", import_id, groups, None, imported))
         except OSError as exc:
-            self.poster.post(("scanned", import_id, [], str(exc)))
+            self.poster.post(("scanned", import_id, [], str(exc), set()))
 
-    def _on_scanned(self, groups: list[MediaGroup], error: str | None) -> None:
+    def _find_imported(self, groups: list[MediaGroup], source: str) -> set[str]:
+        """Grupy, których pliki zdjęć/filmów są już w archiwum (zaimportowane lub w katalogu)."""
+        from ..media import SIDECAR_EXT
+        out = set()
+        for g in groups:
+            media = [p for p in g.files if p.suffix.lower() not in SIDECAR_EXT]
+            try:
+                if media and all(self.catalog.is_imported(p.name, p.stat().st_size, p.stat().st_mtime, source)
+                                 for p in media):
+                    out.add(g.key)
+            except OSError:
+                continue
+        return out
+
+    def _on_scanned(self, groups: list[MediaGroup], error: str | None, imported: set[str]) -> None:
         self._set_busy(False)
         if error:
             QMessageBox.critical(self, "Sortowanie", f"Nie można wczytać folderu:\n{error}")
             return
+        self.all_groups = groups
+        self.imported_keys = imported
+        if not self.show_imported.isChecked():
+            groups = [g for g in groups if g.key not in imported]
         self.groups = groups
         self.group_by_key = {g.key: g for g in groups}
         self.assignment_of = {g.key: None for g in groups}
@@ -393,8 +440,60 @@ class SortTab(QWidget):
             if g.gps:
                 self.worker.submit(self.import_id, "town", g.key, g.gps)
         total = sum(len(g.files) for g in groups)
+        hidden = len(self.all_groups) - len(groups)
         self.status.setText(f"Wczytano {groups_word(len(groups))} materiałów ({total} {files_word(total)}, "
-                            f"{human_size(sum(g.size for g in groups))}). Wybierz kategorię.")
+                            f"{human_size(sum(g.size for g in groups))}). Wybierz kategorię."
+                            + (f" Ukryto {groups_word(hidden)} już zaimportowanych." if hidden else ""))
+        self._sync_form()
+
+    # ══ Karta pamięci ══════════════════════════════════════════
+    def _poll_cards(self) -> None:
+        if self.busy:
+            return
+        new = self.card_watcher.poll()
+        if new:
+            self._show_card(new[0])
+        elif self._card and self._card.root not in self.card_watcher.known:
+            self._card = None
+            self.card_banner.hide()             # karta wyjęta
+
+    def _offer_present_cards(self) -> None:
+        if not self.groups:
+            cards = self.card_watcher.current()
+            if cards:
+                self._show_card(cards[0])
+
+    def _show_card(self, card: Card) -> None:
+        self._card = card
+        self.card_label.setText(f"Wykryto kartę pamięci {card.title} z folderem DCIM. Kliknij „Importuj z karty”, "
+                                "aby wczytać nowe materiały – zostaną skopiowane do archiwum po wybraniu kategorii, "
+                                "a karta pozostanie bez zmian.")
+        self.card_banner.show()
+
+    def _import_card(self) -> None:
+        if self._card is None or self.busy:
+            return
+        self.card_banner.hide()
+        self.mode_copy.setChecked(True)
+        self.show_imported.setChecked(False)
+        self.source.setText(self._card.dcim)
+        self.load_source()
+
+    def _on_mode_changed(self) -> None:
+        self.settings.set("import_mode", core.MODE_COPY if self.mode_copy.isChecked() else core.MODE_MOVE)
+        self.move_btn.setText("Kopiuj do archiwum" if self.mode_copy.isChecked() else "Przenieś materiały")
+
+    def _apply_imported_filter(self) -> None:
+        if not self.all_groups:
+            return
+        show_all = self.show_imported.isChecked()
+        groups = self.all_groups if show_all else [g for g in self.all_groups if g.key not in self.imported_keys]
+        self.groups = groups
+        self.group_by_key = {g.key: g for g in groups}
+        for g in groups:
+            self.assignment_of.setdefault(g.key, None)
+        self.assignment_of = {k: v for k, v in self.assignment_of.items() if k in self.group_by_key}
+        self._fill_tree()
         self._sync_form()
 
     # ══ Lista grup ═════════════════════════════════════════════
@@ -446,7 +545,8 @@ class SortTab(QWidget):
             category = pl.CATEGORY_LABELS[a.category]
             if a.category != pl.CATEGORY_HOBBY and a.name:
                 category += f": {a.name}"
-        return [g.name, g.kind, g.extensions, date_txt, loc, category]
+        name = g.name + ("  (już w archiwum)" if g.key in self.imported_keys else "")
+        return [name, g.kind, g.extensions, date_txt, loc, category]
 
     def _set_row(self, g: MediaGroup) -> None:
         item = self.items.get(g.key)
@@ -988,46 +1088,69 @@ class SortTab(QWidget):
             QMessageBox.warning(self, "Sortowanie", "Uzupełnij kategorię i wymagane pola przed przeniesieniem.")
             return
         size = sum(g.size for g in self.groups if g.key in plan.group_dirs)
-        if QMessageBox.question(self, "Sortowanie", f"Przenieść {len(plan.moves)} {files_word(len(plan.moves))} "
-                                f"({human_size(size)}) do archiwum?\n\n{self.target.text()}") != QMessageBox.StandardButton.Yes:
+        copy = self.mode_copy.isChecked()
+        verb = "Skopiować" if copy else "Przenieść"
+        extra = "\n\nOryginały pozostaną w miejscu importu (np. na karcie)." if copy else ""
+        if QMessageBox.question(self, "Sortowanie", f"{verb} {len(plan.moves)} {files_word(len(plan.moves))} "
+                                f"({human_size(size)}) do archiwum?\n\n{self.target.text()}{extra}") != QMessageBox.StandardButton.Yes:
             return
         self.settings.set("target_root", self.target.text().strip())
         self.settings.save()
         info = self._catalog_info()
-        self._set_busy(True, "Przenoszenie materiałów…")
-        threading.Thread(target=self._move_worker, args=(list(plan.moves), Path(self.target.text().strip()), info),
+        mode = core.MODE_COPY if copy else core.MODE_MOVE
+        self._set_busy(True, "Kopiowanie materiałów do archiwum…" if copy else "Przenoszenie materiałów…")
+        threading.Thread(target=self._move_worker, args=(list(plan.moves), Path(self.target.text().strip()), info, mode),
                          daemon=True).start()
 
-    def _move_worker(self, moves: list[core.Move], root: Path, info: dict) -> None:
+    def _move_worker(self, moves: list[core.Move], root: Path, info: dict, mode: str = core.MODE_MOVE) -> None:
         paths = [m.source for m in moves] + [m.target for m in moves]
-        cat.mark_in_flight(paths)                 # skaner mapy nie indeksuje plików w trakcie przenoszenia
+        cat.mark_in_flight(paths)                 # skaner mapy nie indeksuje plików w trakcie operacji
         ids: list[int] = []
+        progress = lambda i, n, _m: self.poster.post(("move_progress", i, n))  # noqa: E731
         try:
-            done, failed = core.execute_moves(moves, lambda i, n, _m: self.poster.post(("move_progress", i, n)))
+            if mode == core.MODE_COPY:
+                done, failed = core.execute_copies(moves, progress)
+            else:
+                done, failed = core.execute_moves(moves, progress)
             op_id = None
             if done:
+                pairs = [(str(m.source), str(m.target)) for m in done]
                 try:
-                    op_id, ids = self.catalog.apply_moves([(str(m.source), str(m.target)) for m in done], info)
-                except Exception as exc:          # katalog nie może zablokować przenoszenia
+                    if mode == core.MODE_COPY:
+                        op_id, ids = self.catalog.apply_copies(pairs, info)
+                    else:
+                        op_id, ids = self.catalog.apply_moves(pairs, info)
+                except Exception as exc:          # katalog nie może zablokować operacji na plikach
                     self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
-                core.save_history(done, root, op_id=op_id)
+                core.save_history(done, root, op_id=op_id, mode=mode)
         finally:
             cat.clear_in_flight(paths)
-        self.poster.post(("moved", done, failed, ids))
+        self.poster.post(("moved", done, failed, ids, mode))
 
-    def _on_moved(self, done: list[core.Move], failed: list, ids: list[int]) -> None:
+    def _on_moved(self, done: list[core.Move], failed: list, ids: list[int], mode: str = core.MODE_MOVE) -> None:
         self._set_busy(False)
         moved = {m.source for m in done}
-        remaining = [g for g in self.groups if not all(p in moved for p in g.files)]
-        for g in remaining:
-            g.files = [p for p in g.files if p not in moved]
-        self.groups = remaining
-        self.group_by_key = {g.key: g for g in remaining}
-        self.assignment_of = {k: v for k, v in self.assignment_of.items() if k in self.group_by_key}
-        self._fill_tree()
-        self._sync_form()
+        if mode == core.MODE_COPY:
+            # Pliki zostały na karcie: skopiowane grupy oznaczamy jako zaimportowane i ukrywamy
+            copied = {g.key for g in self.all_groups if g.files and all(p in moved for p in g.files)}
+            self.imported_keys |= copied
+            for k in copied:
+                self.assignment_of.pop(k, None)
+            self._apply_imported_filter()
+        else:
+            remaining = [g for g in self.groups if not all(p in moved for p in g.files)]
+            for g in remaining:
+                g.files = [p for p in g.files if p not in moved]
+            self.groups = remaining
+            self.all_groups = remaining
+            self.group_by_key = {g.key: g for g in remaining}
+            self.assignment_of = {k: v for k, v in self.assignment_of.items() if k in self.group_by_key}
+            self._fill_tree()
+            self._sync_form()
         self._refresh_undo_button()
-        msg = f"Przeniesiono {len(done)} {files_word(len(done))}."
+        msg = f"{'Skopiowano' if mode == core.MODE_COPY else 'Przeniesiono'} {len(done)} {files_word(len(done))}."
+        if mode == core.MODE_COPY and done and self._card is not None and not failed:
+            msg += f" Oryginały są nadal na karcie {self._card.title} – możesz ją bezpiecznie wysunąć."
         if failed:
             details = "\n".join(f"• {m.source.name}: {err}" for m, err in failed[:10])
             more = f"\n… i {len(failed) - 10} więcej" if len(failed) > 10 else ""
@@ -1046,27 +1169,42 @@ class SortTab(QWidget):
         if not moves:
             QMessageBox.information(self, "Sortowanie", "Brak importu do cofnięcia.")
             return
-        if QMessageBox.question(self, "Sortowanie", f"Przywrócić {len(moves)} {files_word(len(moves))} do "
-                                "poprzednich lokalizacji?") != QMessageBox.StandardButton.Yes:
+        mode = core.load_history_mode()
+        question = (f"Usunąć {len(moves)} {files_word(len(moves))} skopiowanych do archiwum w ostatnim imporcie?\n"
+                    "Oryginały (np. na karcie) nie zostaną zmienione." if mode == core.MODE_COPY else
+                    f"Przywrócić {len(moves)} {files_word(len(moves))} do poprzednich lokalizacji?")
+        if QMessageBox.question(self, "Sortowanie", question) != QMessageBox.StandardButton.Yes:
             return
+        self._undo_mode = mode
         self._set_busy(True, "Cofanie ostatniego importu…")
-        threading.Thread(target=self._undo_worker, args=(moves, root, core.load_history_op()), daemon=True).start()
+        threading.Thread(target=self._undo_worker, args=(moves, root, core.load_history_op(), core.load_history_mode()),
+                         daemon=True).start()
 
-    def _undo_worker(self, moves: list[core.Move], root: Path | None, op_id: int | None) -> None:
+    def _undo_worker(self, moves: list[core.Move], root: Path | None, op_id: int | None,
+                     mode: str = core.MODE_MOVE) -> None:
         paths = [m.source for m in moves] + [m.target for m in moves]
         cat.mark_in_flight(paths)
         ids: list[int] = []
         try:
-            done, failed = core.undo_moves(moves, stop_at=root)
-            try:
-                ids = self.catalog.undo_moves([(str(m.source), str(m.target)) for m in done], op_id)
-            except Exception as exc:
-                self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
+            if mode == core.MODE_COPY:
+                done, failed = core.undo_copies(moves, stop_at=root)   # usuwa tylko kopie
+                try:
+                    ids = self.catalog.remove_copies([str(m.target) for m in done])
+                except Exception as exc:
+                    self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
+                remaining = [m for m in moves if m not in done]
+            else:
+                done, failed = core.undo_moves(moves, stop_at=root)
+                try:
+                    ids = self.catalog.undo_moves([(str(m.source), str(m.target)) for m in done], op_id)
+                except Exception as exc:
+                    self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
+                undone = {m.source for m in done}
+                remaining = [m for m in moves if m.target not in undone]
             if not failed:
                 core.clear_history()
             else:
-                undone = {m.source for m in done}
-                core.save_history([m for m in moves if m.target not in undone], root, op_id=op_id)
+                core.save_history(remaining, root, op_id=op_id, mode=mode)
         finally:
             cat.clear_in_flight(paths)
         self.poster.post(("undone", done, failed, ids))
@@ -1075,10 +1213,18 @@ class SortTab(QWidget):
         self._set_busy(False)
         self._refresh_undo_button()
         self._sync_form()
-        msg = f"Przywrócono {len(done)} {files_word(len(done))}."
+        copy = getattr(self, "_undo_mode", core.MODE_MOVE) == core.MODE_COPY
+        msg = (f"Usunięto {len(done)} {files_word(len(done))} skopiowanych do archiwum." if copy
+               else f"Przywrócono {len(done)} {files_word(len(done))}.")
+        if copy:
+            removed = {str(m.source) for m in done}
+            self.imported_keys = {k for k in self.imported_keys
+                                  if not any(str(p) in removed for g in self.all_groups if g.key == k for p in g.files)}
+            self._apply_imported_filter()
         if failed:
-            QMessageBox.warning(self, "Sortowanie", f"{msg}\nNie udało się przywrócić: {len(failed)}.")
-        self.status.setText(msg + " Wczytaj import ponownie, aby przypisać kategorie.")
+            details = "\n".join(f"• {m.target.name}: {err}" for m, err in failed[:10])
+            QMessageBox.warning(self, "Sortowanie", f"{msg}\nNie udało się: {len(failed)}.\n\n{details}")
+        self.status.setText(msg if copy else msg + " Wczytaj import ponownie, aby przypisać kategorie.")
         if ids:
             self.catalogChanged.emit(ids)
 
@@ -1106,7 +1252,7 @@ class SortTab(QWidget):
             self.progress.setMaximum(max(ev[3], 1))
             self.progress.setValue(ev[2])
         elif kind == "scanned" and ev[1] == self.import_id:
-            self._on_scanned(ev[2], ev[3])
+            self._on_scanned(ev[2], ev[3], ev[4])
         elif kind == "town" and ev[1] == self.import_id and ev[2] in self.group_by_key:
             self._on_town(ev[2], ev[3], ev[4], ev[5])
         elif kind == "poi" and ev[1] == self.import_id and ev[2] in self.group_by_key:
@@ -1117,7 +1263,7 @@ class SortTab(QWidget):
             self.progress.setMaximum(max(ev[2], 1))
             self.progress.setValue(ev[1])
         elif kind == "moved":
-            self._on_moved(ev[1], ev[2], ev[3])
+            self._on_moved(ev[1], ev[2], ev[3], ev[4])
         elif kind == "undone":
             self._on_undone(ev[1], ev[2], ev[3])
 

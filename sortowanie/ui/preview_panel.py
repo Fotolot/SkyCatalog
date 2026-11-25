@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMessageBox, QPus
 from .. import catalog as cat
 from .. import preview
 from ..config import local_data_dir
-from .common import Poster, human_size, plain_label
+from .common import Poster, flow, human_size, plain_label, scrollable, shrinkable, splitter
 
 try:
     from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
@@ -169,6 +169,8 @@ class PreviewPanel(QWidget):
         self.stack.setMinimumHeight(220)
 
         self.file_combo = QComboBox(self)
+        self.file_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.file_combo.setMinimumContentsLength(8)
         self.file_combo.currentIndexChanged.connect(self._on_file_changed)
         self.details = QTreeWidget(self)
         self.details.setColumnCount(2)
@@ -186,20 +188,26 @@ class PreviewPanel(QWidget):
         self.btn_copy.clicked.connect(self._copy)
         self.btn_fit.clicked.connect(lambda: self.material and self.fitRequested.emit(self.material["id"]))
 
+        top = QWidget(self)
+        tl = QVBoxLayout(top)
+        tl.setContentsMargins(0, 0, 0, 0)
+        tl.addWidget(shrinkable(self.title))
+        tl.addWidget(shrinkable(self.status))
+        tl.addWidget(self.stack, 1)
+        actions = QWidget(self)
+        al = QVBoxLayout(actions)
+        al.setContentsMargins(0, 0, 0, 0)
+        al.addWidget(self.file_combo)
+        al.addWidget(flow(self.btn_reveal, self.btn_copy, self.btn_open, self.btn_fit))
+        bottom = QWidget(self)
+        bl = QVBoxLayout(bottom)
+        bl.setContentsMargins(0, 0, 0, 0)
+        bl.addWidget(actions, 0)
+        bl.addWidget(self.details, 1)
+        self.stack.setMinimumHeight(120)
         lay = QVBoxLayout(self)
-        lay.addWidget(self.title)
-        lay.addWidget(self.status)
-        lay.addWidget(self.stack, 3)
-        lay.addWidget(self.file_combo)
-        row1 = QHBoxLayout()
-        row1.addWidget(self.btn_reveal)
-        row1.addWidget(self.btn_copy)
-        lay.addLayout(row1)
-        row2 = QHBoxLayout()
-        row2.addWidget(self.btn_open)
-        row2.addWidget(self.btn_fit)
-        lay.addLayout(row2)
-        lay.addWidget(self.details, 2)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.addWidget(splitter(Qt.Orientation.Vertical, "preview", top, bottom, sizes=[420, 380], stretch=[3, 2]))
         self.show_material(None)
 
     # ── Wideo ──

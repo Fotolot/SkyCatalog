@@ -1,9 +1,8 @@
 <img src="assets/SkyCatalog.png" alt="SkyCatalog" width="96" align="right">
 
-# SkyCatalog 1.01
+# SkyCatalog
 
-Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki
-(repozytorium nazywa się `Sortowanie`, program – **SkyCatalog**):
+Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki:
 
 * **Sortowanie** – wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię (Hobby, Eventy,
   Zlecenia), a aplikacja przenosi filmy i zdjęcia do uporządkowanej struktury folderów,
@@ -12,18 +11,47 @@ Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, ka
 
 ![Mapa materiałów](docs/zrzut-mapy.png)
 
-## Pobierz gotowy program
+## Pobierz (wersja przenośna)
 
-Program jest budowany automatycznie na Windows (GitHub Actions) przy każdej zmianie:
-
-1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions) i otwórz
-   najnowsze zakończone budowanie „Budowanie SkyCatalog (Windows)”.
-2. Na dole strony, w sekcji **Artifacts**, kliknij **SkyCatalog_1.01** (wymaga zalogowania).
-3. Rozpakuj ZIP (wewnątrz jest folder `SkyCatalog_1.01`) i uruchom `SkyCatalog_1.01\SkyCatalog_1.01.exe`.
-   Nie trzeba instalować Pythona. Cały folder trzymaj razem – zawiera bibliotekę Qt i przeglądarkę mapy.
+1. Otwórz [**najnowsze wydanie**](https://github.com/Fotolot/SkyCatalog/releases/latest)
+   i pobierz **`SkyCatalog-portable.zip`**.
+2. Rozpakuj ZIP w dowolne miejsce z prawem zapisu (np. `Dokumenty` albo `D:\Programy`) – powstanie
+   folder `SkyCatalog`. Uruchom `SkyCatalog\SkyCatalog.exe`. Nie trzeba instalatora ani Pythona;
+   cały folder trzymaj razem (zawiera bibliotekę Qt i przeglądarkę mapy).
 
 Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „Więcej informacji” →
-„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `SkyCatalog_1.01.exe` – zostanie od razu wczytany.
+„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `SkyCatalog.exe` – zostanie od razu wczytany.
+
+## Wersje i aktualizacje
+
+* **Numer wersji**: MAJOR.MINOR z pliku [`VERSION`](VERSION) + numer budowania GitHub Actions,
+  np. `1.1.15`. Widać go w **Aplikacja → O programie…** i we właściwościach pliku `.exe`
+  (Szczegóły). Zmianę MAJOR.MINOR robi się, edytując plik `VERSION`.
+* **Wydania**: każdy push do `main` (lub ręczne uruchomienie workflow na `main`) buduje program,
+  uruchamia testy i samotest, pakuje cały folder do `SkyCatalog-portable.zip` i tworzy tag
+  `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/SkyCatalog/releases) z listą
+  zmian. Push na inne gałęzie tylko buduje i testuje (plik do pobrania w zakładce Actions).
+* **Aktualizacja w programie**: kilka sekund po starcie program w tle sprawdza najnowsze wydanie.
+  Brak internetu lub błąd serwera niczego nie blokuje. Gdy jest nowsza wersja, pojawia się okno
+  „Dostępna wersja X.Y.Z” z listą zmian:
+  * **Aktualizuj** – pobiera ZIP do folderu tymczasowego, rozpakowuje go, uruchamia skrypt
+    pomocniczy i zamyka program. Skrypt czeka na zamknięcie, robi **kopię zapasową** bieżącej
+    wersji w podfolderze `_backup`, kopiuje nowe pliki do folderu programu i uruchamia go ponownie.
+    Jeśli kopiowanie się nie uda – przywraca kopię i uruchamia poprzednią wersję z komunikatem
+    (log: `aktualizacja.log` w folderze tymczasowym `%TEMP%\SkyCatalog-aktualizacja-<wersja>`).
+  * **Później** – zamyka okno; można sprawdzić ponownie w **O programie → Sprawdź aktualizacje**.
+* **Dane użytkownika nie są zmieniane przez aktualizację.** Program trzyma je poza folderem `.exe`:
+  * `%APPDATA%\SkyCatalog\` – `ustawienia.json`, `decyzje_lokalizacji.json`,
+    `historia_sortowania.json`, `cache_osm.json`,
+  * `%LOCALAPPDATA%\SkyCatalog\` – `katalog.sqlite` (+ `-wal`, `-shm`), `miniatury\`,
+    `przegladarka\` (cache mapy).
+
+  Dodatkowo skrypt nigdy nie kopiuje, nie nadpisuje ani nie usuwa w folderze programu:
+  `ustawienia.json`, `cache_osm.json`, `decyzje_lokalizacji.json`, `historia_sortowania.json`,
+  `*.sqlite`, `*.sqlite-wal`, `*.sqlite-shm`, `*.db`, `*.log`, `*.tmp` ani folderów `_backup`,
+  `miniatury`, `przegladarka`, `kafelki`, `logs`, `dane`, `data`.
+* Folder programu musi mieć prawo zapisu (nie `Program Files`) – inaczej program poprosi o ręczne
+  pobranie nowej wersji.
 
 ## Kategorie lotów
 
@@ -67,6 +95,30 @@ Zasady:
   kategorii, a wymagane pola nie są uzupełnione.
 - **Bezpieczeństwo** – istniejące pliki nigdy nie są nadpisywane; ostatni import można
   cofnąć przyciskiem „Cofnij ostatni import”.
+
+## Układ okna
+
+* Wszystkie panele można poszerzać i zwężać, przeciągając uchwyty między nimi (podświetlają się
+  po najechaniu myszą) – w poziomie i w pionie: lista materiałów, kategoria, formularz, podgląd
+  struktury; skanowanie, filtry, listy, mapa i panel podglądu; obraz/film i szczegóły.
+* W wąskim oknie (np. na 1/3 ekranu) panele, które się nie mieszczą, mają paski przewijania,
+  przyciski przechodzą do kolejnego wiersza, a opisy pól w formularzach – nad pola.
+* Układ i rozmiar okna są zapamiętywane po zamknięciu programu.
+  **Widok → Przywróć domyślny układ paneli** przywraca ustawienia początkowe.
+
+## Import z karty SD
+
+* Po włożeniu karty pamięci (dysk wymienny z folderem `DCIM`) nad zakładką sortowania pojawia się
+  pasek „Wykryto kartę pamięci…”. **Importuj z karty** wczytuje materiały z karty w trybie kopiowania.
+* Lista pokazuje tylko **nowe** materiały – pliki skopiowane wcześniej (lub już obecne w archiwum
+  pod tą samą nazwą, z tym samym rozmiarem i czasem zapisu) są ukryte. Pole **Pokaż także materiały
+  już zaimportowane** pokazuje je z dopiskiem „(już w archiwum)”.
+* Po wybraniu kategorii i uzupełnieniu formularza **Kopiuj do archiwum** kopiuje pliki: najpierw do
+  pliku tymczasowego, potem po sprawdzeniu rozmiaru pod docelową nazwę (z zachowaniem daty). Przerwana
+  kopia nie zostawia uszkodzonych plików, istniejące pliki nigdy nie są nadpisywane, a na karcie
+  nic nie jest zmieniane ani usuwane – po zakończeniu kartę można bezpiecznie wysunąć.
+* **Cofnij ostatni import** po kopiowaniu usuwa wyłącznie utworzone kopie (oryginały zostają).
+* Tryb **Przenieś / Kopiuj** można też wybrać ręcznie dla dowolnego folderu importu; wybór jest zapamiętywany.
 
 ## Mapa materiałów
 
@@ -235,7 +287,7 @@ GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanyc
 ## Wymagania i zależności
 
 * Windows 10 lub 11.
-* Gotowy program (folder `SkyCatalog_1.01`) zawiera wszystko – Python nie jest potrzebny.
+* Gotowy program (folder `SkyCatalog`) zawiera wszystko – Python nie jest potrzebny.
 * Uruchomienie ze źródeł: [Python 3.10+](https://www.python.org/downloads/windows/) oraz
   `requirements.txt`:
   * **PySide6** (Qt 6) – interfejs, QtWebEngine (mapa Leaflet), QtMultimedia (odtwarzacz).
@@ -245,8 +297,8 @@ GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanyc
 ## Uruchomienie ze źródeł
 
 ```bat
-git clone https://github.com/skipperpvp-sudo/Sortowanie.git
-cd Sortowanie
+git clone https://github.com/Fotolot/SkyCatalog.git
+cd SkyCatalog
 py -m pip install -r requirements.txt
 py main.py
 ```
@@ -272,8 +324,10 @@ build.bat
 Ikona programu: `assets/SkyCatalog.ico` (plik `.exe`) i `sortowanie/assets/ikona.png` (okno).
 
 Skrypt tworzy `.venv`, instaluje zależności, uruchamia testy i buduje folder
-**`dist\SkyCatalog_1.01\`** z plikiem `SkyCatalog_1.01.exe`. Aplikacja jest budowana jako folder (nie jeden
+**`dist\SkyCatalog\`** z plikiem `SkyCatalog.exe`. Aplikacja jest budowana jako folder (nie jeden
 plik), bo QtWebEngine ma ok. 200 MB i w trybie jednego pliku byłby rozpakowywany przy każdym starcie.
+Nieużywane części Qt (moduły QML i Quick 3D, kontrolki Quick, wykresy, PDF, narzędzia deweloperskie
+przeglądarki, tłumaczenia innych języków niż polski i angielski) są pomijane – folder jest o ok. 30% mniejszy.
 
 Ręcznie:
 

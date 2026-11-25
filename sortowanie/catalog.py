@@ -83,6 +83,10 @@ CREATE TABLE IF NOT EXISTS scan_queue (
 );
 CREATE TABLE IF NOT EXISTS scan_skips (run INTEGER, path TEXT, reason TEXT);
 CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS imported (
+    fingerprint TEXT PRIMARY KEY, target_path TEXT, imported_at REAL
+);
+CREATE INDEX IF NOT EXISTS idx_files_size ON files (size);
 CREATE TABLE IF NOT EXISTS op_log (
     op_id INTEGER, material_id INTEGER, prev TEXT, PRIMARY KEY (op_id, material_id)
 );
@@ -734,6 +738,76 @@ class Catalog:
                         p = json.loads(prev[0])
                         c.execute("UPDATE materials SET category=?, town=?, event_name=?, event_date=? WHERE id=?",
                                   (p.get("category"), p.get("town"), p.get("event_name"), p.get("event_date"), mid))
+        return sorted(touched)
+
+    # ── Import z karty (kopiowanie) ──
+    @staticmethod
+    def fingerprint(name: str, size: int, mtime: float) -> str:
+        """Odcisk pliku z karty: nazwa + rozmiar + czas (z dokładnością do 2 s – system plików FAT)."""
+        return f"{name.casefold()}|{int(size)}|{int(mtime) // 2}"
+
+    def is_imported(self, name: str, size: int, mtime: float, exclude_root: str | None = None) -> bool:
+        """Czy plik był już zaimportowany albo jest w katalogu (np. skopiowany wcześniej poza programem)."""
+        c = self.conn()
+        if c.execute("SELECT 1 FROM imported WHERE fingerprint=?", (self.fingerprint(name, size, mtime),)).fetchone():
+            return True
+        ex = path_key(exclude_root).rstrip("\\/") + os.sep if exclude_root else None
+        for r in c.execute("SELECT path_key, mtime FROM files WHERE size=?", (int(size),)):
+            if ex and r["path_key"].startswith(ex):
+                continue        # ten sam plik na samej karcie (np. zeskanowany w zakładce mapy)
+            if os.path.basename(r["path_key"]) == os.path.normcase(name) and r["mtime"] is not None \
+                    and abs(r["mtime"] - mtime) <= 2:
+                return True
+        return False
+
+    def apply_copies(self, copies: list[tuple[str, str]], info: dict[str, dict] | None = None,
+                     op_id: int | None = None) -> tuple[int, list[int]]:
+        """Po skopiowaniu z karty: indeksuje kopie w archiwum, zapisuje kategorię i rejestr importu.
+
+        Wpisy plików źródłowych (karty) nie są zmieniane – karta pozostaje bez zmian.
+        """
+        info = info or {}
+        op_id = op_id or int(time.time() * 1000)
+        targets = [dst for _src, dst in copies]
+        ids = self.index_paths(targets)
+        c = self.conn()
+        with self._write_lock, c:
+            for src, dst in copies:
+                try:
+                    st = Path(src).stat()
+                    c.execute("INSERT OR REPLACE INTO imported (fingerprint, target_path, imported_at) VALUES (?,?,?)",
+                              (self.fingerprint(Path(src).name, st.st_size, st.st_mtime), dst, time.time()))
+                except OSError:
+                    pass
+                mid = c.execute("SELECT material_id FROM files WHERE path_key=?", (path_key(dst),)).fetchone()
+                data = info.get(src)
+                if mid is None or not data:
+                    continue
+                c.execute("INSERT OR IGNORE INTO op_log (op_id, material_id, prev) VALUES (?,?,?)",
+                          (op_id, mid[0], json.dumps({"category": None, "_nowy": True})))
+                c.execute("UPDATE materials SET category=?, town=?, event_name=?, event_date=?, "
+                          "meta=json_set(COALESCE(meta,'{}'), '$.obiekt', ?) WHERE id=?",
+                          (data.get("category"), data.get("town"), data.get("event_name"),
+                           data.get("event_date"), data.get("object"), mid[0]))
+        return op_id, ids
+
+    def remove_copies(self, targets: list[str]) -> list[int]:
+        """Cofnięcie importu kopiującego: usuwa wpisy usuniętych kopii i rejestr importu."""
+        c = self.conn()
+        touched = set()
+        with self._write_lock, c:
+            for t in targets:
+                row = c.execute("SELECT material_id FROM files WHERE path_key=?", (path_key(t),)).fetchone()
+                if row:
+                    touched.add(row[0])
+                    c.execute("DELETE FROM files WHERE path_key=?", (path_key(t),))
+                c.execute("DELETE FROM imported WHERE target_path=?", (t,))
+            for mid in touched:
+                left = c.execute("SELECT COUNT(*) FROM files WHERE material_id=?", (mid,)).fetchone()[0]
+                if left == 0:
+                    c.execute("DELETE FROM materials WHERE id=?", (mid,))
+                else:
+                    self._refresh_material_paths(c, mid)
         return sorted(touched)
 
     # ── Kolejka skanowania (wznowienie) ──
