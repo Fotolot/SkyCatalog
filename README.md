@@ -1,3 +1,5 @@
+<img src="assets/SkyCatalog.png" alt="SkyCatalog" width="96" align="right">
+
 # SkyCatalog 1.01
 
 Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki
@@ -266,6 +268,8 @@ filtruj, klikaj punkty i trasy, a szczegóły oglądaj w prawym panelu.
 ```bat
 build.bat
 ```
+
+Ikona programu: `assets/SkyCatalog.ico` (plik `.exe`) i `sortowanie/assets/ikona.png` (okno).
 
 Skrypt tworzy `.venv`, instaluje zależności, uruchamia testy i buduje folder
 **`dist\SkyCatalog_1.01\`** z plikiem `SkyCatalog_1.01.exe`. Aplikacja jest budowana jako folder (nie jeden

@@ -14,7 +14,8 @@ a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[("sortowanie/web", "sortowanie/web")],      # Leaflet i strona mapy (lokalnie)
+    datas=[("sortowanie/web", "sortowanie/web"),        # Leaflet i strona mapy (lokalnie)
+           ("sortowanie/assets", "sortowanie/assets")],  # ikona okna
     hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
                    "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"],
     excludes=["tkinter", "PIL", "pydoc"],
@@ -32,6 +33,6 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,
-    # icon="assets\\ikona.ico",
+    icon="assets/SkyCatalog.ico",
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name=NAME)

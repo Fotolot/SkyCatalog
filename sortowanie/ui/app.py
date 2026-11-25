@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QPalette
+from PySide6.QtGui import QAction, QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStyleFactory, QTabWidget
 
 from .. import APP_NAME, __version__
@@ -104,14 +104,30 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
+ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "ikona.png"
+
+
+def _windows_app_id() -> None:
+    """Własny identyfikator aplikacji – pasek zadań Windows pokazuje ikonę SkyCatalog."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(f"{APP_NAME}.{__version__}")
+        except (AttributeError, OSError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
     """``SkyCatalog_1.01.exe [folder_importu] [--mapa] [--skanuj]``"""
     argv = list(sys.argv if argv is None else argv)
     from .webmap import register_scheme
     register_scheme()                                  # przed utworzeniem QApplication
+    _windows_app_id()
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    if ICON_PATH.exists():
+        app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setOrganizationName(APP_NAME)
     settings = Settings()
     win = MainWindow(app, settings)
