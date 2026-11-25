@@ -2,12 +2,15 @@
 import io
 import json
 import os
+import ssl
 import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 from sortowanie import updater
 
@@ -40,17 +43,87 @@ class VersionTests(unittest.TestCase):
 
 
 class ApiTests(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._env = mock.patch.dict(os.environ, {"LOCALAPPDATA": self._tmp.name})
+        self._env.start()
+
+    def tearDown(self):
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def log(self):
+        return updater.log_path().read_text(encoding="utf-8")
+
     def test_parse_latest(self):
         opener = lambda req, timeout: FakeResponse(json.dumps(RELEASE).encode())  # noqa: E731
         r = updater.check_latest(opener=opener)
-        self.assertEqual((r.version, r.asset_url, r.asset_size), ("1.1.15", "https://x/z.zip", 3))
-        self.assertIn("Import z karty", r.notes)
+        self.assertTrue(r.ok)
+        self.assertEqual((r.release.version, r.release.asset_url, r.release.asset_size), ("1.1.15", "https://x/z.zip", 3))
+        self.assertIn("Import z karty", r.release.notes)
+        self.assertIn("OK", self.log())
 
-    def test_network_error_returns_none(self):
+    def test_request_headers_are_valid_http(self):
+        """Nagłówki muszą dać się zakodować (latin-1) – polskie litery blokowały każde sprawdzenie."""
+        seen = {}
+
         def opener(req, timeout):
-            raise OSError("brak sieci")
-        self.assertIsNone(updater.check_latest(opener=opener))
-        self.assertIsNone(updater.check_latest(opener=lambda r, timeout: FakeResponse(b"<html>")))
+            seen.update(req.header_items())
+            for value in req.header_items():
+                value[1].encode("latin-1")
+            return FakeResponse(json.dumps(RELEASE).encode())
+        self.assertTrue(updater.check_latest(opener=opener).ok)
+        self.assertTrue(seen["User-agent"].startswith("SkyCatalog/"))
+        updater._user_agent().encode("ascii")
+
+    def test_network_error_is_described_and_logged(self):
+        def opener(req, timeout):
+            raise urllib.error.URLError(ssl.SSLCertVerificationError(1, "certificate verify failed"))
+        r = updater.check_latest(opener=opener)
+        self.assertEqual(r.status, updater.STATUS_ERROR)
+        self.assertTrue(r.error.startswith("SSLCertVerificationError:"), r.error)
+        log = self.log()
+        for text in ("URLError.reason:", "Traceback:", updater.API_URL, "Wersja programu:", "Typ wyjątku:"):
+            self.assertIn(text, log)
+
+    def test_http_error_shows_code_and_body(self):
+        body = json.dumps({"message": "API rate limit exceeded"}).encode()
+
+        def opener(req, timeout):
+            raise urllib.error.HTTPError(updater.API_URL, 403, "Forbidden", {}, io.BytesIO(body))
+        r = updater.check_latest(opener=opener)
+        self.assertEqual(r.error, "HTTP 403: API rate limit exceeded")
+        self.assertIn("Kod HTTP: 403", self.log())
+        self.assertIn("rate limit", self.log())
+
+    def test_any_exception_is_caught(self):
+        def opener(req, timeout):
+            raise RuntimeError("coś nieoczekiwanego")
+        r = updater.check_latest(opener=opener)
+        self.assertEqual(r.error, "RuntimeError: coś nieoczekiwanego")
+        self.assertEqual(updater.check_latest(opener=lambda r, timeout: FakeResponse(b"<html>")).error[:15],
+                         "JSONDecodeError")
+
+    def test_invalid_release_has_own_message(self):
+        def answer(data):
+            return updater.check_latest(opener=lambda r, timeout: FakeResponse(json.dumps(data).encode()))
+        r = answer({"message": "Not Found"})
+        self.assertEqual(r.status, updater.STATUS_INVALID)
+        self.assertIn("brak pola tag_name", r.error)
+        self.assertIn("Not Found", r.error)
+        r = answer({**RELEASE, "assets": []})
+        self.assertEqual(r.status, updater.STATUS_INVALID)
+        self.assertIn("SkyCatalog-portable.zip", r.error)
+        self.assertEqual(r.release.tag, "v1.1.15")             # do linku „Strona wydań”
+        self.assertIn("nieprawidłowy numer wersji", answer({**RELEASE, "tag_name": "najnowsza"}).error)
+        self.assertIn("NIEPOPRAWNE", self.log())
+
+    def test_log_is_rotated(self):
+        updater.log_path().parent.mkdir(parents=True)
+        updater.log_path().write_text("x" * (updater.LOG_MAX_BYTES + 10), encoding="utf-8")
+        updater.check_latest(opener=lambda r, timeout: FakeResponse(json.dumps(RELEASE).encode()))
+        self.assertTrue(updater.log_path().with_name("aktualizacja.log.1").exists())
+        self.assertLess(updater.log_path().stat().st_size, 2000)
 
     def test_prerelease_and_missing_asset(self):
         self.assertIsNone(updater.parse_release({**RELEASE, "prerelease": True}))

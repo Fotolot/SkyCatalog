@@ -157,15 +157,21 @@ class MainWindow(QMainWindow):
     def check_updates(self, manual: bool = False) -> None:
         from .update_dialog import UpdateChecker
         self._checker = UpdateChecker(self)
-        self._checker.found.connect(lambda release: self._on_update_found(release, manual))
+        self._checker.found.connect(lambda result: self._on_update_found(result, manual))
         self._checker.start()
 
-    def _on_update_found(self, release, manual: bool) -> None:
+    def _on_update_found(self, result, manual: bool) -> None:
         from .. import updater
-        if release is None or not updater.is_newer(release.tag):
+        from .update_dialog import show_check_problem
+        if not result.ok:
+            # przy starcie programu błąd jest tylko zapisywany w dzienniku; okno – po kliknięciu „Sprawdź”
             if manual:
-                QMessageBox.information(self, APP_NAME, f"Masz aktualną wersję {__version__}." if release else
-                                        "Nie udało się sprawdzić aktualizacji (brak internetu lub błąd serwera).")
+                show_check_problem(self, result)
+            return
+        release = result.release
+        if not updater.is_newer(release.tag):
+            if manual:
+                QMessageBox.information(self, APP_NAME, f"Masz aktualną wersję {__version__}.")
             return
         from .update_dialog import UpdateDialog, run_update
         if UpdateDialog(self, release).exec():

@@ -15,7 +15,7 @@ from ..config import app_data_dir, local_data_dir
 
 
 class UpdateChecker(QObject):
-    """Sprawdzanie w tle – brak internetu lub błąd API kończy się po cichu (``found`` z None)."""
+    """Sprawdzanie w tle – ``found`` zawsze dostaje ``updater.CheckResult`` (wydanie albo opis błędu)."""
 
     found = Signal(object)
 
@@ -156,6 +156,40 @@ class AboutDialog(QDialog):
         lay = QVBoxLayout(self)
         lay.addWidget(text)
         lay.addWidget(box)
+
+
+def open_log(parent=None) -> None:
+    """Otwiera dziennik aktualizacji w domyślnym programie (bez poleceń powłoki)."""
+    path = updater.log_path()
+    target = path if path.exists() else path.parent
+    if not target.exists() or not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+        QMessageBox.information(parent, APP_NAME, f"Dziennik aktualizacji:\n{path}")
+
+
+def show_check_problem(parent, result: updater.CheckResult) -> None:
+    """Okno z przyczyną nieudanego sprawdzenia aktualizacji i przyciskiem „Otwórz log”."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(f"{APP_NAME} – aktualizacje")
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    if result.status == updater.STATUS_INVALID:
+        box.setText("Serwer odpowiedział, ale najnowsze wydanie nie nadaje się do aktualizacji.")
+        box.setInformativeText(f"{result.error}\n\nSzczegóły zapisano w dzienniku:\n{updater.log_path()}")
+    else:
+        box.setText("Nie udało się sprawdzić aktualizacji.")
+        box.setInformativeText(f"{result.error}\n\nSzczegóły (z pełnym opisem błędu) zapisano w dzienniku:\n"
+                               f"{updater.log_path()}")
+    log_btn = box.addButton("Otwórz log", QMessageBox.ButtonRole.ActionRole)
+    page_btn = None
+    if result.status == updater.STATUS_INVALID:
+        page_btn = box.addButton("Strona wydań", QMessageBox.ButtonRole.ActionRole)
+    box.addButton("Zamknij", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    if box.clickedButton() is log_btn:
+        open_log(parent)
+    elif page_btn is not None and box.clickedButton() is page_btn:
+        url = result.release.page_url if result.release else updater.RELEASES_URL
+        QDesktopServices.openUrl(QUrl(url))
 
 
 def _esc(s: str) -> str:
