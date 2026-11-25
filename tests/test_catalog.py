@@ -343,3 +343,20 @@ class PerformanceTests(CatalogTestBase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PickTests(CatalogTestBase):
+    def test_pick_overlapping_points_and_track(self):
+        d = self.disk
+        make_jpeg(d / "a.JPG", 50.0, 22.0)
+        make_jpeg(d / "b.JPG", 50.0, 22.00001)              # ~1 m obok
+        make_mp4(d / "DJI_0001.MP4")
+        make_srt(d / "DJI_0001.SRT", 60, start=-30)         # trasa przechodzi przez punkt (50, 22)
+        self.scan()
+        hits = self.cat.pick(cat.Filters(), 50.0, 22.0, 10)
+        self.assertEqual({h["name"] for h in hits}, {"a.JPG", "b.JPG", "DJI_0001.MP4"})
+        video = next(h for h in hits if h["name"] == "DJI_0001.MP4")
+        self.assertTrue(video["on_track"])
+        only_photos = self.cat.pick(cat.Filters(videos=False), 50.0, 22.0, 10)
+        self.assertEqual({h["name"] for h in only_photos}, {"a.JPG", "b.JPG"})
+        self.assertEqual(self.cat.pick(cat.Filters(), 51.0, 23.0, 10), [])

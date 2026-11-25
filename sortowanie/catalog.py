@@ -528,6 +528,44 @@ class Catalog:
                                   f"FROM materials WHERE lat IS NOT NULL AND {where}", args).fetchone()
         return tuple(row) if row and row[0] is not None else None
 
+    def pick(self, flt: Filters, lat: float, lon: float, tol_m: float, limit: int = 40) -> list[dict]:
+        """Materiały pod kliknięciem: punkty zdjęć, punkty startowe i linie tras w promieniu ``tol_m``.
+
+        Zwraca listę od najbliższego – przy nakładających się obiektach użytkownik wybiera z listy.
+        """
+        import math
+        dlat = tol_m / 111_320
+        dlon = tol_m / (111_320 * max(0.05, math.cos(math.radians(lat))))
+        where, args = flt.where()
+        rows = self.conn().execute(
+            f"SELECT id, kind, name, lat, lon, track_display FROM materials WHERE lat IS NOT NULL AND {where} "
+            f"AND max_lat >= ? AND min_lat <= ? AND max_lon >= ? AND min_lon <= ? LIMIT 3000",
+            [*args, lat - dlat, lat + dlat, lon - dlon, lon + dlon]).fetchall()
+        kx, ky = 111_320 * math.cos(math.radians(lat)), 110_540
+
+        def dist_pt(a, b):
+            return math.hypot((b - lon) * kx, (a - lat) * ky)
+
+        out = []
+        for r in rows:
+            d = dist_pt(r["lat"], r["lon"])
+            on_track = False
+            segs = _unpack(r["track_display"]) if r["kind"] == KIND_VIDEO else None
+            for seg in segs or ():
+                pts = [((p[1] - lon) * kx, (p[0] - lat) * ky) for p in seg]
+                for (ax, ay), (bx, by) in zip(pts, pts[1:]):
+                    dx, dy = bx - ax, by - ay
+                    L = dx * dx + dy * dy
+                    t = 0.0 if L == 0 else max(0.0, min(1.0, -(ax * dx + ay * dy) / L))
+                    ds = math.hypot(ax + t * dx, ay + t * dy)
+                    if ds < d:
+                        d, on_track = ds, True
+            if d <= tol_m:
+                out.append({"id": r["id"], "kind": r["kind"], "name": r["name"], "distance_m": round(d, 1),
+                            "on_track": on_track})
+        out.sort(key=lambda x: (x["distance_m"] + (0 if not x["on_track"] else tol_m * 0.25)))
+        return out[:limit]
+
     def display_tracks(self, ids: list[int]) -> dict[int, list[list[tuple[float, float]]]]:
         out: dict[int, list] = {}
         for i in range(0, len(ids), 500):
