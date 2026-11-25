@@ -67,35 +67,11 @@ class GeometryTests(unittest.TestCase):
         self.assertTrue(again.contains(LAT, LON))
 
 
-class PoiTests(unittest.TestCase):
-    def test_rank_prefers_characteristic_and_dedupes(self):
-        els = [
-            node(1, LAT + 0.0010, LON, {"name": "Pomnik X", "historic": "memorial"}),
-            way(2, {"name": "Pomnik X", "historic": "memorial"}, square(LAT + 0.0010, LON, 0.0001)),
-            way(3, {"name": "Park Y", "leisure": "park"}, square(LAT, LON, 0.001)),
-            node(4, LAT, LON, {"name": "Sklep", "shop": "bakery"}),
-            node(5, LAT + 0.01, LON, {"name": "Daleki zamek", "historic": "castle"}),
-        ]
-        shapes = {osm.element_id(e): osm.shape_from_element(e) for e in els}
-        cands = osm.rank_pois(els, shapes, LAT, LON, 250)
-        names = [c.name for c in cands]
-        self.assertEqual(names, ["Pomnik X", "Park Y"])
-        self.assertEqual(cands[0].osm_id, "w2")      # bliżej przez granicę budynku
-        self.assertEqual(cands[1].distance_m, 0.0)    # punkt w parku
-
-    def test_large_stadium_counted_by_boundary(self):
-        el = way(7, {"name": "Stadion Z", "leisure": "stadium"}, square(LAT + 0.0035, LON, 0.0015))
-        shapes = {"w7": osm.shape_from_element(el)}
-        cands = osm.rank_pois([el], shapes, LAT, LON, 250)
-        self.assertEqual(len(cands), 1)
-        self.assertLess(cands[0].distance_m, 250)
-
-    def test_poi_query_contains_bbox_and_geom(self):
-        q = osm.poi_query([(50.0, 22.0, 50.01, 22.01)])
-        self.assertIn("(50.00000,22.00000,50.01000,22.01000)", q)
-        self.assertIn("out geom", q)
-        self.assertIn("[timeout:", q)
-        self.assertIn("[maxsize:", q)
+class NoObjectSearchTests(unittest.TestCase):
+    def test_object_search_removed(self):
+        """Program nie wyszukuje pobliskich obiektów – tylko miejscowości."""
+        for name in ("poi_query", "rank_pois", "PoiCandidate", "POI_RULES"):
+            self.assertFalse(hasattr(osm, name), name)
 
 
 class TownTests(unittest.TestCase):

@@ -62,26 +62,34 @@ Kategorię można przypisać **wszystkim materiałom z importu** albo **zaznaczo
 
 | Kategoria | Struktura | Dane |
 |---|---|---|
-| **Hobby / Luźne loty** | `Hobby/[Miejscowość]/[Obiekt]/WIDEO` i `…/Zdjęcia` | miejscowość i pobliski obiekt rozpoznawane z GPS każdego materiału |
+| **Hobby / Luźne loty** | `Hobby/[Miejscowość]/Zdjęcia` i `…/WIDEO`, opcjonalnie `Hobby/[Miejscowość]/[Nazwa miejsca]/…` | miejscowość rozpoznawana z GPS każdego materiału; nazwę miejsca (opcjonalną) wpisuje użytkownik |
 | **Eventy** | `Eventy/[Miejscowość]/[RRRR-MM-DD] [Nazwa]/WIDEO` i `…/Zdjęcia` | nazwa i data wydarzenia (wymagane), miejscowość z GPS do poprawienia |
 | **Zlecenia** | `Zlecenia/[Lokalizacja]/[RRRR-MM-DD] [Nazwa]/WIDEO` i `…/Zdjęcia` | lokalizacja, data realizacji, nazwa/opis (wymagane, wpisuje użytkownik) |
 
 Przykłady:
 
 ```
-Hobby/Rzeszów/Pomnik Czynu Rewolucyjnego/WIDEO/
-Hobby/Rzeszów/Zdjęcia/                                   ← brak obiektu w promieniu 250 m
+Hobby/Rzeszów/Zdjęcia/                                   ← bez nazwy miejsca
+Hobby/Rzeszów/WIDEO/
+Hobby/Rzeszów/Pomnik/Zdjęcia/                            ← po wpisaniu nazwy „Pomnik”
+Hobby/Rzeszów/Pomnik/WIDEO/
 Eventy/Rzeszów/2026-11-11 Bieg Niepodległości/WIDEO/
 Zlecenia/Łańcut/2026-11-25 Film promocyjny nieruchomości/Zdjęcia/
 ```
 
 Zasady:
 
-- **Hobby** – proponowany obiekt w promieniu (domyślnie 250 m) trzeba zatwierdzić; bez
-  obiektu w promieniu lub po wyborze „bez obiektu” poziom obiektu jest pomijany. Materiały z różnych miejsc trafiają do różnych folderów.
-  Gdy brak GPS lub internetu, można wpisać miejscowość (i opcjonalnie obiekt) ręcznie.
+- **Hobby** – miejscowość jest rozpoznawana z GPS każdego materiału, więc materiały z różnych
+  miejscowości trafiają do różnych folderów. Gdy punkt leży w kilku miejscowościach, wybierasz
+  właściwą z listy; gdy brak GPS lub internetu – wpisujesz miejscowość ręcznie.
+  Pole **„Nazwa miejsca / obiektu”** jest opcjonalne (np. *Pomnik Czynu Rewolucyjnego*).
+  Puste – materiały trafiają bezpośrednio do folderu miejscowości. Nazwa dotyczy całej zaznaczonej
+  grupy materiałów (całego przypisania), a nie pojedynczych plików. Aby nadać różne nazwy, zaznacz
+  część grup na liście i kliknij **„Wydziel jako osobne”** (albo zaznacz grupy i wybierz dla nich
+  Hobby osobno), po czym wpisz nazwę dla każdej części.
+  Program **nie wyszukuje** pobliskich obiektów i nie zgaduje, co zostało sfotografowane.
 - **Eventy** i **Zlecenia** – wszystkie przypisane materiały trafiają do jednego folderu
-  wydarzenia/zlecenia; bez podfolderów obiektów i bez dzielenia według GPS.
+  wydarzenia/zlecenia; bez podfolderów nazw miejsc i bez dzielenia według GPS.
 - **Data** jest proponowana na podstawie daty wykonania materiałów (EXIF, SRT, nazwa
   pliku DJI, metadane MP4) – zawsze można ją zmienić. Data modyfikacji pliku **nie** jest
   używana jako data nagrania.
@@ -195,7 +203,7 @@ na podstawie położenia pliku na dysku.
   „Zgłoś błąd mapy” są stale widoczne na mapie.
 * Dostawcę podkładu (adres, oznaczenie źródła, maks. przybliżenie) zmienisz w **Ustawieniach** –
   przed zmianą sprawdź warunki wybranego dostawcy.
-* Overpass API **nie** służy do rysowania mapy – tylko do rozpoznawania miejscowości i obiektów
+* Overpass API **nie** służy do rysowania mapy – tylko do rozpoznawania miejscowości
   w zakładce sortowania.
 * Bez internetu: lista materiałów, filtry, metadane i podgląd działają normalnie, a mapa pokazuje
   czytelny komunikat o niedostępnym podkładzie.
@@ -212,11 +220,11 @@ na podstawie położenia pliku na dysku.
 
 ## Lokalizacja: OpenStreetMap przez Overpass API
 
-Miejscowości i obiekty są rozpoznawane wyłącznie na podstawie danych
+Miejscowości są rozpoznawane wyłącznie na podstawie danych
 [OpenStreetMap](https://www.openstreetmap.org/) pobieranych przez
 [Overpass API](https://wiki.openstreetmap.org/wiki/Overpass_API) – bez płatnych usług.
-Do serwera wysyłane są **wyłącznie współrzędne / prostokąty obszaru** – nigdy zdjęcia,
-filmy ani nazwy plików.
+Do serwera wysyłane są **wyłącznie współrzędne** – nigdy zdjęcia, filmy ani nazwy plików.
+Aplikacja nie wysyła zapytań o pobliskie obiekty.
 
 **Miejscowość** – zapytanie `is_in` zwraca obszary OSM obejmujące punkt; aplikacja analizuje
 ich tagi:
@@ -228,19 +236,12 @@ ich tagi:
 - dzielnice i osiedla (`place=suburb|quarter|neighbourhood`, `admin_level` ≥ 9) nie tworzą folderów,
 - kilka różnych miejscowości lub brak obszaru → **użytkownik wybiera** z listy propozycji.
 
-**Obiekty** (tylko Hobby) – nazwane pomniki, zabytki, zamki, stadiony, atrakcje, muzea,
-kościoły, wieże, mosty, parki itp. w promieniu 250 m. Pobierana jest ich geometria, więc
-odległość liczy się do **granic budynków i obszarów** (punkt w parku = 0 m), a nie do środka.
-Najbardziej charakterystyczny obiekt jest **tylko propozycją do zatwierdzenia** – GPS drona
-nie dowodzi, że obiekt jest w kadrze. Można go zatwierdzić, wybrać inny lub wybrać „bez obiektu”.
-
 **Oszczędne zapytania** – zgodnie z [zasadami publicznej instancji](https://dev.overpass-api.de/overpass-doc/en/preface/commons.html)
 (orientacyjnie do 10 000 zapytań i 1 GB dziennie):
 
 - zapytania wykonywane są w tle, pojedynczo, z kolejką i odstępem,
 - wielokąty miejscowości są zapisywane – kolejne materiały w ich granicach nie wymagają zapytania,
-- obiekty pobierane są kafelkami (~1,1 × 0,7 km) wspólnie dla wszystkich materiałów importu;
-  kafelek pobrany raz obsługuje każdy plik, którego promień obejmuje,
+- wynik dla punktu jest ponownie używany dla bliskich materiałów (do 150 m),
 - zapytania deklarują małe `[timeout]` i `[maxsize]`,
 - HTTP 429: oczekiwanie na wolny slot według `/api/status`, potem ponowienie,
 - HTTP 504 (i 502/503): ponowienie po 15, 30, 60, 120 s.
@@ -256,12 +257,12 @@ py main.py
 **Cache i decyzje** (w `%APPDATA%\SkyCatalog\`):
 
 - `cache_osm.json` – pobrane dane OSM (odświeżane po 180 dniach, gdy jest internet),
-- `decyzje_lokalizacji.json` – wybory miejscowości i zatwierdzone/odrzucone obiekty,
-  podpowiadane przy kolejnych importach z tego miejsca,
+- `decyzje_lokalizacji.json` – wybory miejscowości, podpowiadane przy kolejnych importach
+  z tego miejsca (wpisy o obiektach ze starszych wersji zostają w pliku, ale nie są używane),
 - `ustawienia.json`, `historia_sortowania.json`.
 
 Bez internetu aplikacja korzysta z zapisanych danych i decyzji, a gdy ich brak – pozwala
-wpisać miejscowość (i obiekt) ręcznie.
+wpisać miejscowość ręcznie.
 
 **Źródło danych:** © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright),
 licencja ODbL. Oznaczenie jest widoczne w oknie aplikacji i w ustawieniach.
@@ -273,7 +274,7 @@ py narzedzia\sprawdz_lokalizacje.py 50.027082,22.003366 50.040451,21.999130
 ```
 
 Skrypt wypisuje wysłane zapytania, skrót odpowiedzi serwera, klasyfikację obszarów,
-rozpoznaną miejscowość, kandydatów na obiekt (z odległością do granicy) i proponowane foldery.
+rozpoznaną miejscowość i proponowane foldery Hobby (bez nazwy miejsca i z nazwą z opcji `--nazwa`).
 Opcja `--surowe` pokazuje pełny JSON, `--endpoint` pozwala sprawdzić własny serwer.
 
 ## Obsługiwane pliki
@@ -365,7 +366,7 @@ Sortowanie/
 │   ├── planner.py        # kategorie, walidacja, struktura folderów
 │   ├── media.py          # wczytywanie importu i grupowanie powiązanych plików
 │   ├── metadata.py       # odczyt GPS i daty (EXIF, SRT, MP4)
-│   ├── geo.py            # miejscowość i obiekty z GPS, cache danych i decyzji
+│   ├── geo.py            # miejscowość z GPS, cache danych i wyborów
 │   ├── osm.py            # analiza danych OSM: geometria, klasyfikacja, zapytania
 │   ├── overpass.py       # klient Overpass API (kolejka, 429/504, endpoint)
 │   ├── config.py         # ustawienia w %APPDATA%\SkyCatalog

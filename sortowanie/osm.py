@@ -1,4 +1,4 @@
-"""Analiza danych OpenStreetMap: geometria, klasyfikacja obszarów i obiektów.
+"""Analiza danych OpenStreetMap: geometria i rozpoznawanie miejscowości.
 
 Moduł nie wykonuje zapytań sieciowych – przetwarza odpowiedzi Overpass API
 (format JSON z ``out geom``). Nazwy miejsc nie są nigdzie wpisane na sztywno:
@@ -182,93 +182,6 @@ def element_id(el: dict) -> str:
 def element_name(tags: dict, language: str = "pl") -> str | None:
     name = tags.get(f"name:{language}") or tags.get("name")
     return str(name).strip() if name else None
-
-
-# ── Obiekty charakterystyczne ──────────────────────────────────
-
-# (klucz, dozwolone wartości lub None = dowolna, opis) – kolejność = priorytet
-POI_RULES: list[tuple[str, tuple[str, ...] | None, str]] = [
-    ("historic", ("monument", "memorial", "castle", "fort", "ruins", "city_gate", "tower",
-                  "manor", "palace", "church", "monastery", "archaeological_site", "building",
-                  "wayside_shrine", "citywalls", "aircraft", "tank", "locomotive", "yes"), "zabytek"),
-    ("tourism", ("attraction", "museum", "viewpoint", "artwork", "gallery", "zoo",
-                 "theme_park", "aquarium"), "atrakcja"),
-    ("leisure", ("stadium",), "stadion"),
-    ("building", ("stadium", "castle", "church", "cathedral", "basilica", "chapel", "palace"), "budynek"),
-    ("amenity", ("place_of_worship", "townhall", "theatre", "university", "arts_centre"), "obiekt"),
-    ("man_made", ("tower", "bridge", "lighthouse", "water_tower", "observation_tower", "dam",
-                  "chimney"), "budowla"),
-    ("leisure", ("park", "water_park", "marina", "garden", "nature_reserve", "sports_centre"), "teren"),
-    ("natural", ("peak", "water", "beach", "cliff", "rock"), "przyroda"),
-]
-
-
-def poi_category(tags: dict) -> tuple[int, str] | None:
-    """(priorytet, opis) obiektu lub None, gdy nie jest charakterystyczny."""
-    for i, (key, values, label) in enumerate(POI_RULES):
-        value = tags.get(key)
-        if value is not None and (values is None or value in values):
-            # Pomijamy wewnętrzne elementy, np. pojedynczy grób na cmentarzu
-            if key == "historic" and value == "yes" and "building" not in tags:
-                continue
-            return i, label
-    return None
-
-
-def poi_filters() -> list[str]:
-    filters = []
-    for key, values, _ in POI_RULES:
-        if values is None:
-            filters.append(f'["{key}"]')
-        else:
-            filters.append(f'["{key}"~"^({"|".join(values)})$"]')
-    # unikalne (leisure występuje dwa razy)
-    return list(dict.fromkeys(filters))
-
-
-@dataclass
-class PoiCandidate:
-    osm_id: str
-    name: str
-    category: str
-    priority: int
-    distance_m: float
-    tags: dict = field(default_factory=dict)
-
-    def to_json(self) -> dict:
-        return {"id": self.osm_id, "name": self.name, "category": self.category,
-                "priority": self.priority, "distance": round(self.distance_m, 1)}
-
-    @classmethod
-    def from_json(cls, d: dict) -> "PoiCandidate":
-        return cls(d["id"], d["name"], d.get("category", ""), d.get("priority", 99), d.get("distance", 0.0))
-
-
-def rank_pois(elements: list[dict], shapes: dict[str, Shape], lat: float, lon: float,
-              radius: float, language: str = "pl") -> list[PoiCandidate]:
-    """Obiekty w promieniu (odległość do granicy geometrii), najlepsze pierwsze.
-
-    Ten sam obiekt bywa zmapowany kilka razy (np. budynek i węzeł) – deduplikacja po nazwie.
-    """
-    best_by_name: dict[str, PoiCandidate] = {}
-    for el in elements:
-        tags = el.get("tags") or {}
-        name = element_name(tags, language)
-        cat = poi_category(tags)
-        if not name or cat is None:
-            continue
-        shape = shapes.get(element_id(el))
-        if shape is None:
-            continue
-        dist = shape.distance_m(lat, lon)
-        if dist > radius:
-            continue
-        cand = PoiCandidate(element_id(el), name, cat[1], cat[0], dist, tags)
-        key = name.casefold()
-        prev = best_by_name.get(key)
-        if prev is None or (cand.priority, cand.distance_m) < (prev.priority, prev.distance_m):
-            best_by_name[key] = cand
-    return sorted(best_by_name.values(), key=lambda c: (c.priority, round(c.distance_m / 25), c.distance_m))
 
 
 # ── Miejscowości ───────────────────────────────────────────────
@@ -468,14 +381,3 @@ def area_query(lat: float, lon: float, node_radius: int = 3000, timeout: int = 2
         f'node(around:{node_radius},{p})["place"~"^({node_places})$"]["name"];'
         f"out qt;"
     )
-
-
-def poi_query(bboxes: list[tuple[float, float, float, float]], timeout: int = 25,
-              maxsize: int = 128 * 1024 * 1024) -> str:
-    """Nazwane obiekty charakterystyczne w podanych prostokątach (s, w, n, e) z geometrią."""
-    parts = []
-    for s, w, n, e in bboxes:
-        bb = f"{s:.5f},{w:.5f},{n:.5f},{e:.5f}"
-        for flt in poi_filters():
-            parts.append(f'nwr["name"]{flt}({bb});')
-    return f"[out:json][timeout:{timeout}][maxsize:{maxsize}];({''.join(parts)});out geom qt;"

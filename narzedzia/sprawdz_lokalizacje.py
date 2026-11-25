@@ -6,9 +6,9 @@ Użycie (z folderu projektu):
     py narzedzia\\sprawdz_lokalizacje.py --endpoint https://moj-serwer/api/interpreter 50.0,22.0
 
 Wypisuje: zapytania, skrót odpowiedzi serwera, klasyfikację obszarów OSM, wynik
-rozpoznania miejscowości, kandydatów na obiekt w promieniu i proponowane foldery
-dla kategorii Hobby (przed i po zatwierdzeniu obiektu). Używa osobnego, tymczasowego
-cache, aby pokazać prawdziwe odpowiedzi serwera.
+rozpoznania miejscowości i proponowane foldery dla kategorii Hobby (bez nazwy miejsca
+i z przykładową nazwą z opcji --nazwa). Program nie wyszukuje pobliskich obiektów.
+Używa osobnego, tymczasowego cache, aby pokazać prawdziwe odpowiedzi serwera.
 """
 
 from __future__ import annotations
@@ -48,8 +48,7 @@ class LoggingClient(OverpassClient):
         else:
             for el in els[:60]:
                 tags = el.get("tags") or {}
-                keys = ("name", "place", "boundary", "admin_level", "border_type", "historic", "tourism",
-                        "leisure", "building", "amenity", "man_made", "natural")
+                keys = ("name", "place", "boundary", "admin_level", "border_type")
                 short = {k: tags[k] for k in keys if k in tags}
                 geom = ""
                 if el.get("geometry"):
@@ -66,13 +65,12 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("punkty", nargs="+", help="lat,lon")
     ap.add_argument("--endpoint", help="adres Overpass API (domyślnie z ustawień)")
-    ap.add_argument("--promien", type=int, default=250)
+    ap.add_argument("--nazwa", default="Pomnik", help="przykładowa nazwa miejsca do podglądu folderów")
     ap.add_argument("--surowe", action="store_true", help="wypisz pełny JSON odpowiedzi")
     args = ap.parse_args()
 
     tmp = Path(tempfile.mkdtemp(prefix="sortowanie_diag_"))
     settings = Settings(tmp / "ustawienia.json")
-    settings.set("poi_radius_m", args.promien)
     if args.endpoint:
         settings.set("overpass_url", args.endpoint)
     client = LoggingClient(lambda: settings.get("overpass_url"), raw=args.surowe)
@@ -105,42 +103,22 @@ def main() -> None:
         places[key] = Place(town=result.town, town_candidates=result.candidates,
                             town_reason=result.reason, town_source=source, error=error)
 
-    print(f"\n════ Obiekty w promieniu {args.promien} m (jedno pobranie kafelków dla wszystkich punktów)")
-
-    def on_result(key, cands, source, error, remembered):
-        p = places[key]
-        p.objects, p.object_checked = cands, True
-        lat, lon = next((la, lo) for k, la, lo in points if k == key)
-        print(f"\n  Punkt {lat}, {lon}: {len(cands)} kandydatów [{source}] {error}")
-        for c in cands[:10]:
-            print(f"    - {c.name!r} ({c.category}, {c.osm_id}) – {c.distance_m:.0f} m od granicy obiektu")
-
-    service.objects(points, on_result)
-
     print("\n════ Proponowane foldery (Hobby)")
-    hobby = Assignment(CATEGORY_HOBBY)
+    plain = Assignment(CATEGORY_HOBBY)
+    named = Assignment(CATEGORY_HOBBY, name=args.nazwa)
     for key, lat, lon in points:
         p = places[key]
-        for kind in (KIND_VIDEO, KIND_PHOTO):
+        if p.ambiguous:
+            print(f"  {lat}, {lon}: najpierw wybór miejscowości z {p.town_candidates}")
+            continue
+        for kind in (KIND_PHOTO, KIND_VIDEO):
             g = MediaGroup(key=key, name=key, files=[], kind=kind, gps=(lat, lon))
-            if p.ambiguous:
-                print(f"  {lat}, {lon}: najpierw wybór miejscowości z {p.town_candidates}")
-                break
-            if p.needs_object_decision:
-                prop = p.proposed_object
-                pending = relative_dir(g, hobby, p)
-                p.object_choice = prop.osm_id
-                accepted = relative_dir(g, hobby, p)
-                p.object_choice = ""
-                rejected = relative_dir(g, hobby, p)
-                p.object_choice = None
-                print(f"  {lat}, {lon} [{g.media_folder}]: propozycja obiektu {prop.name!r} – do zatwierdzenia"
-                      f" (do decyzji folder = {pending})\n      po zatwierdzeniu: {accepted.as_posix()}/"
-                      f"\n      po odrzuceniu:    {rejected.as_posix()}/")
-            else:
-                rel = relative_dir(g, hobby, p)
-                print(f"  {lat}, {lon} [{g.media_folder}]: "
-                      f"{rel.as_posix() + '/' if rel else 'brak danych – miejscowość do wpisania ręcznie'}")
+            rel = relative_dir(g, plain, p)
+            if rel is None:
+                print(f"  {lat}, {lon} [{g.media_folder}]: brak danych – miejscowość do wpisania ręcznie")
+                continue
+            print(f"  {lat}, {lon} [{g.media_folder}]: {rel.as_posix()}/"
+                  f"   (z nazwą miejsca: {relative_dir(g, named, p).as_posix()}/)")
     print(f"\nZapytań: {client.requests_made}, pobrano: {client.bytes_received / 1024:.0f} KB")
 
 

@@ -1,7 +1,8 @@
 """Kategorie lotów, walidacja formularza i wyliczanie folderów docelowych.
 
 Struktury:
-    Hobby/[Miejscowość]/[Obiekt]/WIDEO|Zdjęcia/      (obiekt pomijany, gdy brak w promieniu)
+    Hobby/[Miejscowość]/Zdjęcia|WIDEO/                  (bez nazwy miejsca)
+    Hobby/[Miejscowość]/[Nazwa miejsca]/Zdjęcia|WIDEO/  (nazwa wpisana przez użytkownika)
     Eventy/[Miejscowość]/[RRRR-MM-DD] [Nazwa]/WIDEO|Zdjęcia/
     Zlecenia/[Lokalizacja]/[RRRR-MM-DD] [Nazwa]/WIDEO|Zdjęcia/
 
@@ -46,7 +47,8 @@ class Assignment:
     name: str = ""       # nazwa wydarzenia / zlecenia
     date: str = ""       # RRRR-MM-DD
     place: str = ""      # Eventy: miejscowość; Zlecenia: lokalizacja; Hobby: miejscowość ręcznie
-    # Hobby: ``name`` = obiekt wpisany ręcznie (gdy nie rozpoznano go z GPS)
+    # Hobby: ``name`` = opcjonalna nazwa miejsca / obiektu – wspólna dla wszystkich grup przypisania
+    # (różne nazwy = osobne przypisania, np. po „Wydziel jako osobne”)
     # Czy użytkownik sam edytował pole (wtedy nie nadpisujemy go propozycjami)
     edited: set = field(default_factory=set)
     id: int = field(default_factory=lambda: next(_ids))
@@ -111,14 +113,9 @@ def suggest_town(groups: list[MediaGroup], places: dict[str, Place]) -> str:
     return max(counter, key=counter.get) if counter else ""
 
 
-def is_pending(group: MediaGroup, places: dict[str, Place], need_object: bool = False) -> bool:
-    """Grupa ma GPS, ale rozpoznawanie lokalizacji (i ew. obiektów) jeszcze trwa."""
-    if group.gps is None:
-        return False
-    place = places.get(group.key)
-    if place is None:
-        return True
-    return need_object and bool(place.town) and not place.object_checked
+def is_pending(group: MediaGroup, places: dict[str, Place]) -> bool:
+    """Grupa ma GPS, ale rozpoznawanie miejscowości jeszcze trwa."""
+    return group.gps is not None and group.key not in places
 
 
 # ── Foldery docelowe ───────────────────────────────────────────
@@ -132,25 +129,19 @@ def event_folder_name(assignment: Assignment) -> str | None:
 
 
 def hobby_location(group: MediaGroup, place: Place | None, assignment: Assignment) -> tuple[str | None, str | None]:
-    """(miejscowość, obiekt) dla Hobby.
+    """(miejscowość, nazwa miejsca) dla Hobby.
 
-    - miejscowość: rozpoznana z GPS lub wybrana przez użytkownika; ręczna miejscowość
-      (``assignment.place``) tylko dla materiałów bez GPS lub bez wyniku,
-    - obiekt: wyłącznie zatwierdzony przez użytkownika (GPS drona nie dowodzi, że obiekt
-      jest w kadrze); obiekt wpisany ręcznie (``assignment.name``) tylko, gdy nie było
-      propozycji, a użytkownik go nie odrzucił.
+    - miejscowość: rozpoznana z GPS lub wybrana przez użytkownika z listy propozycji;
+      miejscowość wpisana ręcznie (``assignment.place``) – dla materiałów bez GPS lub bez wyniku,
+    - nazwa miejsca: wyłącznie wpisana przez użytkownika (``assignment.name``), wspólna dla
+      całego przypisania; pusta = materiały trafiają bezpośrednio do folderu miejscowości.
     """
-    manual_obj = assignment.name.strip() or None
+    name = assignment.name.strip() or None
     if place is not None and place.town:
-        if place.object_choice:
-            return place.town, place.object_name
-        if place.object_choice == "" or place.objects:
-            return place.town, None
-        return place.town, manual_obj
+        return place.town, name
     if place is not None and place.ambiguous:
-        return None, None
-    manual_town = assignment.place.strip()
-    return (manual_town or None), (manual_obj if manual_town else None)
+        return None, name
+    return (assignment.place.strip() or None), name
 
 
 def relative_dir(group: MediaGroup, assignment: Assignment | None, place: Place | None) -> Path | None:
@@ -159,16 +150,14 @@ def relative_dir(group: MediaGroup, assignment: Assignment | None, place: Place 
         return None
     root = ROOT_FOLDERS[assignment.category]
     if assignment.category == CATEGORY_HOBBY:
-        if place is not None and place.needs_object_decision:
-            return None
-        town, obj = hobby_location(group, place, assignment)
+        town, name = hobby_location(group, place, assignment)
         town = sanitize_component(town or "")
         if not town:
             return None
         parts = [root, town]
-        obj = sanitize_component(obj or "")
-        if obj:
-            parts.append(obj)
+        name = sanitize_component(name or "")
+        if name:
+            parts.append(name)
         return Path(*parts, group.media_folder)
 
     place_name = sanitize_component(assignment.place)
@@ -185,16 +174,15 @@ def validate_assignment(assignment: Assignment, groups: list[MediaGroup],
     errors: list[str] = []
     label = CATEGORY_LABELS[assignment.category]
     if assignment.category == CATEGORY_HOBBY:
-        pending = [g for g in groups if is_pending(g, places, need_object=True)]
+        pending = [g for g in groups if is_pending(g, places)]
         if pending:
-            errors.append(f"{label}: trwa rozpoznawanie lokalizacji (grupy: {len(pending)}).")
-        ready = [g for g in groups if not is_pending(g, places, need_object=True)]
+            errors.append(f"{label}: trwa rozpoznawanie miejscowości (grupy: {len(pending)}).")
+        ready = [g for g in groups if not is_pending(g, places)]
         ambiguous = [g for g in ready if (p := places.get(g.key)) is not None and p.ambiguous]
         if ambiguous:
             errors.append(f"{label}: wybierz miejscowość z listy propozycji (grupy: {len(ambiguous)}).")
-        undecided = [g for g in ready if (p := places.get(g.key)) is not None and p.needs_object_decision]
-        if undecided:
-            errors.append(f"{label}: zatwierdź albo odrzuć proponowane obiekty (grupy: {len(undecided)}).")
+        if assignment.name.strip() and not sanitize_component(assignment.name):
+            errors.append(f"{label}: nazwa miejsca „{assignment.name.strip()}” nie zawiera dozwolonych znaków.")
         missing = [g for g in ready if g not in ambiguous
                    and not hobby_location(g, places.get(g.key), assignment)[0]]
         if missing:

@@ -12,7 +12,7 @@ from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QFileDialog, QFormLayout, QFrame,
                                QGridLayout,
                                QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QProgressBar, QPushButton,
-                               QRadioButton, QSplitter, QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QRadioButton, QStackedWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from .. import catalog as cat
@@ -29,12 +29,11 @@ from .common import (DateField, Poster, files_word, flow, groups_word, human_siz
 NO_CATEGORY = None
 SCOPE_ALL, SCOPE_SELECTED = "all", "selected"
 NEW_TARGET = "— nowe —"
-NO_OBJECT = "— bez obiektu —"
 ERROR_COLOR = QColor("#c62828")
 
 
 class GeoWorker(threading.Thread):
-    """Wątek lokalizacji (Overpass) – zadania zbierane w partie, jedno zapytanie naraz."""
+    """Wątek rozpoznawania miejscowości (Overpass) – zadania zbierane w partie, jedno zapytanie naraz."""
 
     BATCH_DELAY = 0.3
 
@@ -68,18 +67,6 @@ class GeoWorker(threading.Thread):
                 except Exception as exc:
                     result, source, error = TownResult(None, [], "błąd"), SOURCE_NONE, str(exc)
                 self.post(("town", import_id, key, result, source, error))
-            by_import: dict[int, list] = {}
-            for import_id, kind, key, (lat, lon) in jobs:
-                if kind == "poi":
-                    by_import.setdefault(import_id, []).append((key, lat, lon))
-            for import_id, points in by_import.items():
-                def deliver(key, cands, source, error, remembered, i=import_id):
-                    self.post(("poi", i, key, cands, source, error, remembered))
-                try:
-                    self.service.objects(points, deliver)
-                except Exception as exc:
-                    for key, _lat, _lon in points:
-                        deliver(key, [], SOURCE_NONE, str(exc), None)
             if self.jobs.empty():
                 self.post(("net_status", ""))
 
@@ -106,13 +93,12 @@ class SortTab(QWidget):
         self.items: dict[str, QTreeWidgetItem] = {}
         self.assignment_of: dict[str, pl.Assignment | None] = {}
         self.places: dict[str, Place] = {}
-        self.poi_requested: set[str] = set()
         self.current: pl.Assignment | None = None
         self.plan: pl.ImportPlan | None = None
         self.busy = False
         self._suspend = False
         self._existing: list[pl.ExistingTarget] = []
-        self._decision_rows: dict[int, tuple[str, list[str]]] = {}
+        self._decision_rows: dict[int, list[str]] = {}
         self._choice_ids: list[str] = []
         self._refresh_timer = QTimer(self, singleShot=True, interval=150, timeout=self._refresh_preview)
 
@@ -288,44 +274,47 @@ class SortTab(QWidget):
         w = QWidget()
         f = QFormLayout(w)
         f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
-        f.addRow(plain_label("Miejscowość i pobliski obiekt są rozpoznawane z GPS każdego materiału osobno. "
-                             "Jeśli w promieniu nie ma charakterystycznego obiektu, jego poziom jest pomijany.\n"
-                             "Struktura: Hobby / Miejscowość / [Obiekt] / WIDEO | Zdjęcia", wrap=True, hint=True))
+        f.addRow(plain_label("Miejscowość jest rozpoznawana z GPS każdego materiału osobno. Program nie zgaduje, "
+                             "co sfotografowano lub sfilmowano – nazwę miejsca wpisujesz sam (opcjonalnie).\n"
+                             "Struktura: Hobby / Miejscowość / [Nazwa miejsca] / Zdjęcia | WIDEO",
+                             wrap=True, hint=True))
+        self.hobby_place_name = QLineEdit()
+        self.hobby_place_name.setPlaceholderText("Np. Pomnik Czynu Rewolucyjnego")
+        self.hobby_place_name.setClearButtonEnabled(True)
+        self.hobby_place_name.textChanged.connect(lambda t: self._on_field_changed("name", t))
+        f.addRow("Nazwa miejsca / obiektu:", self.hobby_place_name)
+        f.addRow("", plain_label("Np. Pomnik Czynu Rewolucyjnego. Pozostaw puste, aby zapisać bezpośrednio "
+                                 "w folderze miejscowości.", wrap=True, hint=True))
+        self.hobby_name_scope = plain_label("", wrap=True, hint=True)
+        f.addRow("", self.hobby_name_scope)
         self.hobby_town = QLineEdit()
         self.hobby_town.textChanged.connect(lambda t: self._on_field_changed("place", t))
-        self.hobby_object = QLineEdit()
-        self.hobby_object.textChanged.connect(lambda t: self._on_field_changed("name", t))
         f.addRow("Miejscowość ręcznie:", self.hobby_town)
-        f.addRow("", plain_label("Tylko dla materiałów bez GPS lub gdy lokalizacji nie rozpoznano.", hint=True))
-        f.addRow("Obiekt ręcznie:", self.hobby_object)
-        f.addRow("", plain_label("Opcjonalnie – gdy nie rozpoznano obiektu (np. bez internetu).", hint=True))
+        f.addRow("", plain_label("Tylko dla materiałów bez GPS lub gdy miejscowości nie rozpoznano.",
+                                 wrap=True, hint=True))
         self.hobby_summary = plain_label("", wrap=True)
         f.addRow(self.hobby_summary)
-        dec = QGroupBox("Do zatwierdzenia")
-        dl = QVBoxLayout(dec)
-        dl.addWidget(plain_label("Obiekt w pobliżu jest tylko propozycją – GPS drona nie dowodzi, że obiekt jest "
-                                 "w kadrze. Zatwierdź go, wybierz inny lub „bez obiektu”. Przy niejednoznacznej "
-                                 "miejscowości wybierz właściwą. Decyzje są zapamiętywane dla tego miejsca.",
+        self.decision_box = QGroupBox("Niejednoznaczna miejscowość")
+        dl = QVBoxLayout(self.decision_box)
+        dl.addWidget(plain_label("Punkt leży w kilku miejscowościach albo nie ma jednoznacznego obszaru. "
+                                 "Wybierz właściwą – wybór jest zapamiętywany dla tego miejsca.",
                                  wrap=True, hint=True))
         self.decision_tree = QTreeWidget()
-        self.decision_tree.setHeaderLabels(["Co", "Propozycja", "Grupy", "Status"])
+        self.decision_tree.setHeaderLabels(["Propozycje", "Grupy", "Status"])
         self.decision_tree.setRootIsDecorated(False)
-        self.decision_tree.setColumnWidth(0, 85)
-        self.decision_tree.setColumnWidth(1, 210)
-        self.decision_tree.setMaximumHeight(130)
+        self.decision_tree.setColumnWidth(0, 230)
+        self.decision_tree.setColumnWidth(1, 50)
+        self.decision_tree.setMaximumHeight(110)
         self.decision_tree.itemSelectionChanged.connect(self._on_decision_selected)
         dl.addWidget(self.decision_tree)
         row = QHBoxLayout()
         self.choice_combo = QComboBox()
         b_ok = QPushButton("Zatwierdź wybór")
-        b_ok.clicked.connect(lambda: self._apply_decision(False))
-        b_none = QPushButton("Bez obiektu")
-        b_none.clicked.connect(lambda: self._apply_decision(True))
+        b_ok.clicked.connect(lambda: self._apply_decision())
         row.addWidget(self.choice_combo, 1)
         row.addWidget(b_ok)
-        row.addWidget(b_none)
         dl.addLayout(row)
-        f.addRow(dec)
+        f.addRow(self.decision_box)
         return w
 
     def _build_detail(self) -> QWidget:
@@ -432,7 +421,6 @@ class SortTab(QWidget):
         self.group_by_key = {g.key: g for g in groups}
         self.assignment_of = {g.key: None for g in groups}
         self.places = {}
-        self.poi_requested = set()
         self.current = None
         self.scope_all.setChecked(True)
         self._fill_tree()
@@ -521,17 +509,6 @@ class SortTab(QWidget):
             p = self.places[g.key]
             if p.town:
                 loc = p.town + (" (wybrano)" if p.town_decided else "")
-                if p.object_choice:
-                    loc += f" / {p.object_name} ✓"
-                elif p.object_choice == "" and p.objects:
-                    loc += " / bez obiektu"
-                elif p.objects:
-                    prop = p.proposed_object
-                    loc += f" / {prop.name}? ({prop.distance_m:.0f} m, do zatwierdzenia)"
-                elif p.object_failed:
-                    loc += " / obiekty: nie sprawdzono"
-                elif g.key in self.poi_requested and not p.object_checked:
-                    loc += " / szukanie obiektów…"
             elif p.ambiguous:
                 loc = "do wyboru: " + " / ".join(p.town_candidates[:4])
             else:
@@ -544,8 +521,8 @@ class SortTab(QWidget):
             category = "— brak —"
         else:
             category = pl.CATEGORY_LABELS[a.category]
-            if a.category != pl.CATEGORY_HOBBY and a.name:
-                category += f": {a.name}"
+            if a.name.strip():
+                category += f": {a.name.strip()}"
         name = g.name + ("  (już w archiwum)" if g.key in self.imported_keys else "")
         return [name, g.kind, g.extensions, date_txt, loc, category]
 
@@ -621,7 +598,6 @@ class SortTab(QWidget):
                 new = pl.Assignment(cat_key)     # nowe przypisanie – pusty formularz
                 for k in keys:
                     self.assignment_of[k] = new
-            self._request_objects()
         self._sync_form()
         self._update_rows(keys)
 
@@ -629,6 +605,10 @@ class SortTab(QWidget):
         if self.current is None:
             return
         new = pl.Assignment(self.current.category)
+        if new.category == pl.CATEGORY_HOBBY and self.current.place.strip():
+            # Hobby: ręczna miejscowość przechodzi do nowej części, nazwę miejsca nadajesz osobno
+            new.place = self.current.place
+            new.edited = {"place"}
         for k in self._selected_keys():
             self.assignment_of[k] = new
         self._sync_form()
@@ -666,7 +646,7 @@ class SortTab(QWidget):
             if a is not None:
                 self._apply_suggestions(a)
             self.hobby_town.setText(a.place if a else "")
-            self.hobby_object.setText(a.name if a else "")
+            self.hobby_place_name.setText(a.name if a else "")
             self.name_edit.setText(a.name if a else "")
             self.date_field.setText(a.date if a else "")
             self.place_combo.setEditText(a.place if a else "")
@@ -750,6 +730,8 @@ class SortTab(QWidget):
         self.current.edited.add(field_name)
         if field_name == "name":
             self._update_rows([g.key for g in self._members(self.current)])
+        if hobby:
+            self._update_hobby_summary()
         self._schedule_refresh()
 
     # ══ Istniejące wydarzenia / zlecenia ═══════════════════════
@@ -772,35 +754,10 @@ class SortTab(QWidget):
         self.current.edited.update({"name", "date", "place"})
 
     # ══ Lokalizacje (Overpass w tle) ═══════════════════════════
-    def _request_objects(self) -> None:
-        for g in self.groups:
-            a = self.assignment_of.get(g.key)
-            p = self.places.get(g.key)
-            if (a is not None and a.category == pl.CATEGORY_HOBBY and g.gps and p and p.town
-                    and not p.object_checked and g.key not in self.poi_requested):
-                self.poi_requested.add(g.key)
-                self.worker.submit(self.import_id, "poi", g.key, g.gps)
-        self._update_geo_status()
-
     def _on_town(self, key: str, result: TownResult, source: str, error: str) -> None:
         self.places[key] = Place(town=result.town, town_candidates=list(result.candidates),
                                  town_reason=result.reason, town_source=source,
                                  town_decided=source == SOURCE_DECISION, error=error)
-        self._request_objects()
-        self._after_geo_update(key)
-
-    def _on_poi(self, key: str, cands: list, source: str, error: str, remembered: str | None) -> None:
-        place = self.places.get(key)
-        if place is None:
-            return
-        place.objects = list(cands)
-        place.object_checked = True
-        place.object_failed = source == SOURCE_NONE and bool(error)
-        if remembered is not None and (remembered == "" or any(c.osm_id == remembered for c in cands)):
-            place.object_choice = remembered
-            place.object_choice_source = SOURCE_DECISION
-        if error and not place.error:
-            place.error = error
         self._after_geo_update(key)
 
     def _after_geo_update(self, key: str) -> None:
@@ -833,13 +790,12 @@ class SortTab(QWidget):
             self.geo_status.setText("")
             return
         pending = sum(1 for g in with_gps if g.key not in self.places)
-        pending_poi = sum(1 for k in self.poi_requested if k in self.places and not self.places[k].object_checked)
         unresolved = sum(1 for g in with_gps if g.key in self.places and not self.places[g.key].town
                          and not self.places[g.key].ambiguous)
         ambiguous = sum(1 for g in with_gps if g.key in self.places and self.places[g.key].ambiguous)
         parts = [f"GPS: {len(with_gps)} z {groups_word(len(self.groups))}"]
-        if pending or pending_poi:
-            parts.append(f"rozpoznawanie: {pending} miejscowości, {pending_poi} obiektów…")
+        if pending:
+            parts.append(f"rozpoznawanie miejscowości: {pending}…")
         if ambiguous:
             parts.append(f"niejednoznaczna miejscowość: {ambiguous}")
         if unresolved:
@@ -858,24 +814,29 @@ class SortTab(QWidget):
             return
         members = self._members(a)
         ok = sum(1 for g in members if (self.places.get(g.key) or Place()).town)
-        pending = sum(1 for g in members if pl.is_pending(g, self.places, need_object=True))
-        missing = len(members) - ok - pending
-        unchecked = sum(1 for g in members if (self.places.get(g.key) or Place()).object_failed)
-        to_decide = sum(1 for g in members if (p := self.places.get(g.key)) is not None
-                        and (p.ambiguous or p.needs_object_decision))
-        text = f"Rozpoznano lokalizację: {ok} z {groups_word(len(members))}."
+        pending = sum(1 for g in members if pl.is_pending(g, self.places))
+        ambiguous = sum(1 for g in members if (p := self.places.get(g.key)) is not None and p.ambiguous)
+        missing = len(members) - ok - pending - ambiguous
+        text = f"Rozpoznano miejscowość: {ok} z {groups_word(len(members))}."
         if pending:
             text += f" Trwa rozpoznawanie: {pending}."
         if missing:
-            text += f" Bez lokalizacji: {missing} – zostanie użyta miejscowość wpisana ręcznie."
-        if unchecked:
-            text += (f" Grupy bez sprawdzonych obiektów: {unchecked} – wpisz obiekt ręcznie, kliknij "
-                     "„Ponów rozpoznawanie” albo pozostaw bez poziomu obiektu.")
-        if to_decide:
-            text += f" Czeka na Twoją decyzję: {groups_word(to_decide)} (lista poniżej)."
-        warn = (missing and not a.place.strip()) or unchecked or to_decide
+            text += f" Bez miejscowości: {missing} – zostanie użyta miejscowość wpisana ręcznie."
+        if ambiguous:
+            text += f" Do wyboru z listy: {groups_word(ambiguous)} (poniżej)."
+        warn = (missing and not a.place.strip()) or ambiguous
         self.hobby_summary.setText(text)
         self.hobby_summary.setStyleSheet("color: #c62828;" if warn else "")
+        name = a.name.strip()
+        n = len(members)
+        if n > 1:
+            scope = (f"Nazwa „{name}” dotyczy wszystkich {n} grup tego przypisania." if name else
+                     f"Nazwa dotyczy wszystkich {n} grup tego przypisania.")
+            scope += (" Aby nadać różne nazwy, zaznacz część grup na liście i kliknij „Wydziel jako osobne” – "
+                      "albo zaznacz grupy i wybierz dla nich Hobby osobno.")
+        else:
+            scope = "Nazwa dotyczy tej grupy materiałów."
+        self.hobby_name_scope.setText(scope)
 
     def _retry_geo(self) -> None:
         self.geo.reset_network_state()
@@ -884,15 +845,10 @@ class SortTab(QWidget):
             if g.gps and p is not None and not p.town and not p.ambiguous:
                 del self.places[g.key]
                 self.worker.submit(self.import_id, "town", g.key, g.gps)
-            elif p is not None and p.object_failed:
-                p.object_checked = False
-                p.object_failed = False
-                self.poi_requested.discard(g.key)
-        self._request_objects()
         self._update_rows()
         self._schedule_refresh()
 
-    # ══ Decyzje ═══════════════════════════════════════════════
+    # ══ Wybór miejscowości ═════════════════════════════════════
     def _refresh_decisions(self) -> None:
         a = self.current
         selected = self.decision_tree.currentItem()
@@ -900,113 +856,62 @@ class SortTab(QWidget):
         self.decision_tree.blockSignals(True)
         self.decision_tree.clear()
         self._decision_rows = {}
-        if a is None or a.category != pl.CATEGORY_HOBBY:
-            self.decision_tree.blockSignals(False)
-            return
         towns: dict[tuple, list[str]] = {}
-        objects: dict[str, list[str]] = {}
-        for g in self._members(a):
-            p = self.places.get(g.key)
-            if p is None:
-                continue
-            if p.town_candidates and (p.ambiguous or p.town_decided):
-                towns.setdefault(tuple(sorted(p.town_candidates)), []).append(g.key)
-            if p.town and p.objects:
-                objects.setdefault(p.objects[0].osm_id, []).append(g.key)
-        rows = []
+        if a is not None and a.category == pl.CATEGORY_HOBBY:
+            for g in self._members(a):
+                p = self.places.get(g.key)
+                if p is not None and p.town_candidates and (p.ambiguous or p.town_decided):
+                    towns.setdefault(tuple(sorted(p.town_candidates)), []).append(g.key)
+        target = None
         for cands, keys in towns.items():
             chosen = {self.places[k].town for k in keys if self.places[k].town}
             todo = any(self.places[k].ambiguous for k in keys)
             status = "wybierz miejscowość" if todo else f"wybrano: {', '.join(sorted(chosen))}"
-            rows.append(("town|" + "|".join(cands), "town", keys, ["Miejscowość", " / ".join(cands), str(len(keys)), status], todo))
-        for oid, keys in objects.items():
-            prop = self.places[keys[0]].objects[0]
-            dist = min(next(o.distance_m for o in self.places[k].objects if o.osm_id == oid) for k in keys)
-            choices = {self.places[k].object_choice for k in keys}
-            if None in choices:
-                status, todo = ("do zatwierdzenia" if choices == {None} else "częściowo zatwierdzone"), True
-            else:
-                status = "zatwierdzono: " + ", ".join(sorted({self.places[k].object_name or NO_OBJECT for k in keys}))
-                todo = False
-            rows.append(("obj|" + oid, "obj", keys, ["Obiekt", f"{prop.name} ({prop.category}, {dist:.0f} m)",
-                                                      str(len(keys)), status], todo))
-        target = None
-        for i, (rkey, kind, keys, values, todo) in enumerate(rows):
-            item = QTreeWidgetItem(values)
+            rkey = "|".join(cands)
+            item = QTreeWidgetItem([" / ".join(cands), str(len(keys)), status])
             item.setData(0, Qt.ItemDataRole.UserRole, rkey)
             if todo:
-                for c in range(4):
+                for c in range(3):
                     item.setForeground(c, QBrush(ERROR_COLOR))
             self.decision_tree.addTopLevelItem(item)
-            self._decision_rows[id(item)] = (kind, keys)
-            item.setData(1, Qt.ItemDataRole.UserRole, i)
+            self._decision_rows[id(item)] = keys
             if rkey == selected_key or (target is None and todo):
                 target = item
         target = target or self.decision_tree.topLevelItem(0)
         self.decision_tree.blockSignals(False)
+        self.decision_box.setVisible(bool(towns))
         if target is not None:
             self.decision_tree.setCurrentItem(target)
             self._on_decision_selected()
         else:
             self.choice_combo.clear()
 
-    def _decision_for(self, item) -> tuple[str, list[str]] | None:
+    def _decision_keys(self) -> list[str] | None:
+        item = self.decision_tree.currentItem()
         return self._decision_rows.get(id(item)) if item is not None else None
 
     def _on_decision_selected(self) -> None:
-        row = self._decision_for(self.decision_tree.currentItem())
-        if not row:
+        keys = self._decision_keys()
+        if not keys:
             return
-        kind, keys = row
         self.choice_combo.clear()
-        if kind == "town":
-            p = self.places[keys[0]]
-            self._choice_ids = list(p.town_candidates)
-            self.choice_combo.addItems(self._choice_ids)
-            current = p.town if p.town in p.town_candidates else p.town_candidates[0]
-            self.choice_combo.setCurrentIndex(self._choice_ids.index(current))
-        else:
-            best: dict[str, object] = {}
-            for k in keys:
-                for o in self.places[k].objects:
-                    if o.osm_id not in best or o.distance_m < best[o.osm_id].distance_m:
-                        best[o.osm_id] = o
-            ordered = sorted(best.values(), key=lambda o: (o.priority, o.distance_m))
-            self._choice_ids = [o.osm_id for o in ordered] + [""]
-            self.choice_combo.addItems([f"{o.name} ({o.category}, {o.distance_m:.0f} m)" for o in ordered] + [NO_OBJECT])
-            choice = self.places[keys[0]].object_choice
-            current_id = choice if choice is not None else ordered[0].osm_id
-            self.choice_combo.setCurrentIndex(self._choice_ids.index(current_id) if current_id in self._choice_ids else 0)
+        p = self.places[keys[0]]
+        self._choice_ids = list(p.town_candidates)
+        self.choice_combo.addItems(self._choice_ids)
+        current = p.town if p.town in p.town_candidates else p.town_candidates[0]
+        self.choice_combo.setCurrentIndex(self._choice_ids.index(current))
 
-    def _apply_decision(self, no_object: bool) -> None:
-        row = self._decision_for(self.decision_tree.currentItem())
-        if not row:
-            QMessageBox.information(self, "Sortowanie", "Wybierz pozycję z listy „Do zatwierdzenia”.")
-            return
-        kind, keys = row
+    def _apply_decision(self) -> None:
+        keys = self._decision_keys()
         idx = self.choice_combo.currentIndex()
-        if kind == "town":
-            if no_object or idx < 0:
-                return
-            choice = self._choice_ids[idx]
-            for k in keys:
-                p, g = self.places[k], self.group_by_key[k]
-                p.town, p.town_decided, p.town_source = choice, True, SOURCE_DECISION
-                self.decisions.remember_town(g.gps[0], g.gps[1], p.town_candidates, choice)
-            self._request_objects()
-        else:
-            choice = "" if no_object or idx < 0 else self._choice_ids[idx]
-            skipped = 0
-            for k in keys:
-                p, g = self.places[k], self.group_by_key[k]
-                if choice and all(o.osm_id != choice for o in p.objects):
-                    skipped += 1
-                    continue
-                p.object_choice, p.object_choice_source = choice, "użytkownik"
-                self.decisions.remember_object(g.gps[0], g.gps[1], [o.osm_id for o in p.objects], choice)
-            if skipped:
-                QMessageBox.information(self, "Sortowanie", f"Wybrany obiekt jest poza promieniem dla "
-                                        f"{groups_word(skipped)} – te grupy nadal czekają na decyzję.")
+        if not keys or idx < 0:
+            QMessageBox.information(self, "Sortowanie", "Wybierz pozycję z listy niejednoznacznych miejscowości.")
+            return
+        choice = self._choice_ids[idx]
+        for k in keys:
+            p, g = self.places[k], self.group_by_key[k]
+            p.town, p.town_decided, p.town_source = choice, True, SOURCE_DECISION
+            self.decisions.remember_town(g.gps[0], g.gps[1], p.town_candidates, choice)
         self._update_rows(keys)
         self._update_hobby_summary()
         self._refresh_decisions()
@@ -1073,8 +978,8 @@ class SortTab(QWidget):
                 continue
             place = self.places.get(g.key)
             if a.category == pl.CATEGORY_HOBBY:
-                town, obj = pl.hobby_location(g, place, a)
-                data = {"category": "hobby", "town": town, "object": obj}
+                town, name = pl.hobby_location(g, place, a)
+                data = {"category": "hobby", "town": town, "object": name}
             else:
                 d = pl.parse_date(a.date)
                 data = {"category": a.category, "town": a.place.strip(), "event_name": a.name.strip(),
@@ -1257,8 +1162,6 @@ class SortTab(QWidget):
             self._on_scanned(ev[2], ev[3], ev[4])
         elif kind == "town" and ev[1] == self.import_id and ev[2] in self.group_by_key:
             self._on_town(ev[2], ev[3], ev[4], ev[5])
-        elif kind == "poi" and ev[1] == self.import_id and ev[2] in self.group_by_key:
-            self._on_poi(ev[2], ev[3], ev[4], ev[5], ev[6])
         elif kind == "net_status":
             self.net_status.setText(ev[1])
         elif kind == "move_progress":

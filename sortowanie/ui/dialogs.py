@@ -21,7 +21,7 @@ THEMES = {"systemowy": "Systemowy", "jasny": "Jasny", "ciemny": "Ciemny"}
 
 
 class SettingsDialog(QDialog):
-    """Overpass (rozpoznawanie miejscowości i obiektów), podkład mapy i motyw."""
+    """Overpass (rozpoznawanie miejscowości), podkład mapy i motyw."""
 
     def __init__(self, parent, settings: Settings, cache_summary: str, decisions_count: int,
                  on_clear_cache, on_clear_decisions) -> None:
@@ -30,13 +30,9 @@ class SettingsDialog(QDialog):
         self.settings = settings
         s = settings.as_dict()
 
-        over = QGroupBox("Rozpoznawanie lokalizacji – Overpass API (OpenStreetMap)", self)
+        over = QGroupBox("Rozpoznawanie miejscowości – Overpass API (OpenStreetMap)", self)
         form = QFormLayout(over)
         self.overpass = QLineEdit(s["overpass_url"])
-        self.radius = QSpinBox()
-        self.radius.setRange(10, 5000)
-        self.radius.setSingleStep(25)
-        self.radius.setValue(int(s["poi_radius_m"]))
         self.cache_days = QSpinBox()
         self.cache_days.setRange(1, 3650)
         self.cache_days.setValue(int(s["cache_days"]))
@@ -44,7 +40,6 @@ class SettingsDialog(QDialog):
         self.offline = QCheckBox("Tryb offline – tylko zapisane dane i decyzje (bez internetu)")
         self.offline.setChecked(bool(s["offline"]))
         form.addRow("Endpoint Overpass API:", self.overpass)
-        form.addRow("Promień obiektów (m):", self.radius)
         form.addRow("Odświeżaj dane OSM po (dniach):", self.cache_days)
         form.addRow("Kontakt w User-Agent (opcjonalnie):", self.contact)
         form.addRow(self.offline)
@@ -53,7 +48,8 @@ class SettingsDialog(QDialog):
             form.addRow(plain_label(f"Zmienna {ENV_ENDPOINT} ma pierwszeństwo: {env}", wrap=True))
         form.addRow(plain_label(
             "Do serwera wysyłane są wyłącznie współrzędne. Overpass służy tylko do rozpoznania miejscowości "
-            "i obiektów w zakładce sortowania – mapa materiałów go nie używa.", wrap=True, hint=True))
+            "w zakładce sortowania – mapa materiałów go nie używa. Program nie wyszukuje pobliskich obiektów.",
+            wrap=True, hint=True))
         cache_row = QHBoxLayout()
         self.cache_label = plain_label(f"Cache OSM: {cache_summary}")
         btn_cache = QPushButton("Wyczyść")
@@ -63,10 +59,10 @@ class SettingsDialog(QDialog):
         cache_row.addWidget(btn_cache)
         form.addRow(cache_row)
         dec_row = QHBoxLayout()
-        self.dec_label = plain_label(f"Zapamiętane decyzje: {decisions_count}")
+        self.dec_label = plain_label(f"Zapamiętane wybory miejscowości: {decisions_count}")
         btn_dec = QPushButton("Wyczyść")
-        btn_dec.clicked.connect(lambda: self._confirm("Usunąć zapamiętane decyzje?", on_clear_decisions,
-                                                      self.dec_label, "Zapamiętane decyzje: 0"))
+        btn_dec.clicked.connect(lambda: self._confirm("Usunąć zapamiętane wybory miejscowości?", on_clear_decisions,
+                                                      self.dec_label, "Zapamiętane wybory miejscowości: 0"))
         dec_row.addWidget(self.dec_label, 1)
         dec_row.addWidget(btn_dec)
         form.addRow(dec_row)
@@ -133,7 +129,7 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "Ustawienia", "Wpisz oznaczenie źródła wymagane przez dostawcę mapy.")
             return
         self.settings.update({
-            "overpass_url": url, "poi_radius_m": self.radius.value(), "cache_days": self.cache_days.value(),
+            "overpass_url": url, "cache_days": self.cache_days.value(),
             "contact_email": self.contact.text().strip(), "offline": self.offline.isChecked(),
             "tile_url": self.tile_url.text().strip(), "tile_attribution": self.tile_attr.text().strip(),
             "tile_max_zoom": self.tile_zoom.value(), "theme": self.theme.currentData(),
