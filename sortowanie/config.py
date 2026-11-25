@@ -26,7 +26,8 @@ DEFAULT_SETTINGS: dict = {
     "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     "tile_attribution": "© OpenStreetMap contributors",
     "tile_max_zoom": 19,
-    "map_theme": "jasny",
+    # Motyw aplikacji i mapy: "systemowy", "jasny" lub "ciemny"
+    "theme": "systemowy",
     # Skanowanie komputera: puste = wszystkie lokalne dyski stałe i wymienne
     "scan_drives": [],
     "scan_network_drives": False,

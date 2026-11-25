@@ -74,10 +74,12 @@ def history_path() -> Path:
     return app_data_dir() / "historia_sortowania.json"
 
 
-def save_history(moves: list[Move], root: Path | None = None, path: Path | None = None) -> None:
+def save_history(moves: list[Move], root: Path | None = None, path: Path | None = None,
+                 op_id: int | None = None) -> None:
     data = {
         "czas": datetime.now().isoformat(timespec="seconds"),
         "archiwum": str(root) if root else "",
+        "operacja_katalogu": op_id,
         "przeniesienia": [{"z": str(m.source), "do": str(m.target)} for m in moves],
     }
     try:
@@ -95,6 +97,16 @@ def load_history(path: Path | None = None) -> tuple[list[Move], Path | None]:
         return moves, root
     except (OSError, ValueError, KeyError, TypeError):
         return [], None
+
+
+def load_history_op(path: Path | None = None) -> int | None:
+    """Identyfikator operacji w katalogu materiałów (do przywrócenia kategorii przy cofaniu)."""
+    try:
+        data = json.loads((path or history_path()).read_text(encoding="utf-8"))
+        value = data.get("operacja_katalogu")
+        return int(value) if value is not None else None
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def clear_history(path: Path | None = None) -> None:
