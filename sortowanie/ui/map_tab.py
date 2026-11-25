@@ -52,6 +52,7 @@ class MapTab(QWidget):
         self._filter_timer = QTimer(self, singleShot=True, interval=250, timeout=self._apply_filters)
         self._last_run = 0
         self._build()
+        self._had_located = self.catalog.bounds(cat.Filters()) is not None
         self._load_filter_values()
         self._refresh_lists()
         self._update_scan_buttons()
@@ -453,6 +454,11 @@ class MapTab(QWidget):
             self._load_filter_values()
             self._refresh_lists()
             self.map.send("reset")
+            if not self._had_located:            # pierwsze materiały na mapie – pokaż je
+                bbox = self.catalog.bounds(self.filters())
+                if bbox:
+                    self.map.send("fit", bbox=list(bbox))
+                    self._had_located = True
             self.scanFinished.emit()
             return
         if pending:
