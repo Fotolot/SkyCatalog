@@ -216,7 +216,7 @@ class WindowsScriptTests(unittest.TestCase):
         res = self.run_script()
         log = (self.root / "aktualizacja.log").read_text(errors="replace")
         self.assertEqual(res.returncode, 0, log)
-        self.assertEqual((self.app / "_internal" / "lib.dll").read_text(), "v2")
+        self.assertEqual((self.app / "_internal" / "lib.dll").read_text(), "v2", log)
         self.assertEqual((self.app / "ustawienia.json").read_text(encoding="utf-8"), "dane użytkownika")
         self.assertEqual((self.app / "katalog.sqlite").read_text(), "baza")
         self.assertEqual((self.app / "_backup" / "_internal" / "lib.dll").read_text(), "v1")
