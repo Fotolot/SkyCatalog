@@ -95,6 +95,37 @@ class HobbyFormTests(unittest.TestCase):
         self.select("A")
         self.assertEqual(self.tab.hobby_place_name.text(), "Pomnik")
 
+    def test_groups_without_gps_get_suggestion_and_explanation(self):
+        """Zdjęcia bez GPS obok zdjęć z Rzeszowa: przycisk aktywny, wyjaśnia brak miejscowości,
+        a podpowiedź „Z GPS pozostałych: Rzeszów” wpisuje miejscowość dopiero po kliknięciu."""
+        from PySide6.QtWidgets import QMessageBox
+        g = group("D", KIND_PHOTO, gps=None)
+        groups = self.tab.groups + [g]
+        self.tab._on_scanned(groups, None, set())
+        for k in "ABC":
+            self.tab.places[k] = Place(town="Rzeszów")
+        self.tab.scope_all.setChecked(True)
+        self.tab.category_boxes[pl.CATEGORY_HOBBY].click()
+        self.assertFalse(self.plan().ready)
+        self.assertTrue(self.tab.move_btn.isEnabled())            # klikalny – wyjaśni, czego brakuje
+        self.assertIn("brak miejscowości", self.tab.move_btn.toolTip())
+        self.assertFalse(self.tab.hobby_town_suggest.isHidden())
+        self.assertIn("Rzeszów", self.tab.hobby_town_suggest.text())
+        self.assertEqual(self.tab.hobby_town.text(), "")         # nic nie wpisano automatycznie
+        shown = []
+        with mock.patch.object(QMessageBox, "exec", lambda box: shown.append(box.informativeText())), \
+                mock.patch("sortowanie.core.execute_moves") as moves:
+            self.tab._move()
+        moves.assert_not_called()
+        self.assertIn("brak miejscowości", shown[0])
+        self.assertEqual(self.tab._groups_without_town(), [g])
+        self.tab.hobby_town_suggest.click()
+        self.assertEqual(self.tab.hobby_town.text(), "Rzeszów")
+        plan = self.plan()
+        self.assertTrue(plan.ready, plan.errors)
+        self.assertEqual(plan.group_dirs["D"], Path("Hobby/Rzeszów/Zdjęcia"))
+        self.assertTrue(self.tab.hobby_town_suggest.isHidden())
+
     def test_ambiguous_town_choice(self):
         self.tab.places["A"] = Place(town=None, town_candidates=["Wieś G", "Przysiółek H"])
         self.tab._sync_form()

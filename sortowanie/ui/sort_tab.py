@@ -290,7 +290,16 @@ class SortTab(QWidget):
         f.addRow("", self.hobby_name_scope)
         self.hobby_town = QLineEdit()
         self.hobby_town.textChanged.connect(lambda t: self._on_field_changed("place", t))
-        f.addRow("Miejscowość ręcznie:", self.hobby_town)
+        # Podpowiedź (nie automat): miejscowość rozpoznana z GPS pozostałych materiałów
+        self.hobby_town_suggest = QPushButton()
+        self.hobby_town_suggest.setToolTip("Wpisuje tę miejscowość dla materiałów bez GPS – kliknij tylko, "
+                                           "jeśli zostały wykonane w tym samym miejscu.")
+        self.hobby_town_suggest.clicked.connect(self._use_hobby_town_suggestion)
+        self.hobby_town_suggest.hide()
+        town_row = QHBoxLayout()
+        town_row.addWidget(self.hobby_town, 1)
+        town_row.addWidget(self.hobby_town_suggest)
+        f.addRow("Miejscowość ręcznie:", town_row)
         f.addRow("", plain_label("Tylko dla materiałów bez GPS lub gdy miejscowości nie rozpoznano.",
                                  wrap=True, hint=True))
         self.hobby_summary = plain_label("", wrap=True)
@@ -826,6 +835,9 @@ class SortTab(QWidget):
         if ambiguous:
             text += f" Do wyboru z listy: {groups_word(ambiguous)} (poniżej)."
         warn = (missing and not a.place.strip()) or ambiguous
+        suggestion = pl.suggest_town(members, self.places) if missing and not a.place.strip() else ""
+        self.hobby_town_suggest.setText(f"Z GPS pozostałych: {suggestion}")
+        self.hobby_town_suggest.setVisible(bool(suggestion))
         self.hobby_summary.setText(text)
         self.hobby_summary.setStyleSheet("color: #c62828;" if warn else "")
         name = a.name.strip()
@@ -838,6 +850,31 @@ class SortTab(QWidget):
         else:
             scope = "Nazwa dotyczy tej grupy materiałów."
         self.hobby_name_scope.setText(scope)
+
+    def _use_hobby_town_suggestion(self) -> None:
+        if self.current is not None and self.current.category == pl.CATEGORY_HOBBY:
+            self.hobby_town.setText(pl.suggest_town(self._members(self.current), self.places))
+
+    def _groups_without_town(self) -> list[MediaGroup]:
+        """Grupy Hobby, dla których nie ma miejscowości (brak GPS lub wyniku i brak wpisu ręcznego)."""
+        out = []
+        for g in self.groups:
+            a = self.assignment_of.get(g.key)
+            p = self.places.get(g.key)
+            if (a is not None and a.category == pl.CATEGORY_HOBBY and not pl.is_pending(g, self.places)
+                    and not (p is not None and p.ambiguous) and not pl.hobby_location(g, p, a)[0]):
+                out.append(g)
+        return out
+
+    def _show_groups(self, groups: list[MediaGroup]) -> None:
+        """Zaznacza grupy na liście (formularz pokazuje ich przypisanie)."""
+        self.tree.clearSelection()
+        for g in groups:
+            item = self.items.get(g.key)
+            if item is not None:
+                item.setSelected(True)
+        if groups and groups[0].key in self.items:
+            self.tree.scrollToItem(self.items[groups[0].key])
 
     def _retry_geo(self) -> None:
         self.geo.reset_network_state()
@@ -975,7 +1012,10 @@ class SortTab(QWidget):
         else:
             self.errors_label.setText("\n".join(f"• {e}" for e in shown))
             self.errors_label.setStyleSheet("color: #c62828;")
-        self.move_btn.setEnabled(self.plan.ready and not folder_error and not self.busy)
+        # Przycisk aktywny zawsze, gdy są materiały – po kliknięciu wyjaśnia, czego brakuje
+        self.move_btn.setEnabled(bool(self.groups) and not self.busy)
+        self.move_btn.setToolTip("" if self.plan.ready and not folder_error else
+                                 "Najpierw uzupełnij:\n" + "\n".join(f"• {e}" for e in errors[:8]))
 
     # ══ Przenoszenie i cofanie ═════════════════════════════════
     def _catalog_info(self) -> dict[str, dict]:
@@ -1000,8 +1040,11 @@ class SortTab(QWidget):
     def _move(self) -> None:
         self._refresh_preview()
         plan = self.plan
-        if plan is None or not plan.ready or self.busy:
-            QMessageBox.warning(self, "Sortowanie", "Uzupełnij kategorię i wymagane pola przed przeniesieniem.")
+        if self.busy or plan is None:
+            return
+        folder_error = pl.check_folders(self.source.text().strip(), self.target.text().strip())
+        if not plan.ready or folder_error:
+            self._explain_not_ready(plan, folder_error)
             return
         copy = self.mode_copy.isChecked()
         root = Path(self.target.text().strip())
@@ -1038,6 +1081,28 @@ class SortTab(QWidget):
         self._set_busy(True, "Kopiowanie materiałów do archiwum…" if copy else "Przenoszenie materiałów…")
         moves = core.with_backups(list(plan.moves), root)
         threading.Thread(target=self._move_worker, args=(moves, root, info, mode), daemon=True).start()
+
+    def _explain_not_ready(self, plan: pl.ImportPlan, folder_error: str | None) -> None:
+        verb = "skopiować" if self.mode_copy.isChecked() else "przenieść"
+        errors = ([folder_error] if folder_error else []) + list(plan.errors)
+        if not errors and not plan.moves and not plan.unresolved:
+            errors = ["Brak materiałów do zaimportowania."]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Sortowanie")
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(f"Nie można jeszcze {verb} materiałów. Uzupełnij:")
+        box.setInformativeText("\n".join(f"• {e}" for e in errors[:10]))
+        missing = self._groups_without_town()
+        show_btn = None
+        if missing:
+            show_btn = box.addButton(f"Pokaż materiały bez miejscowości ({len(missing)})",
+                                     QMessageBox.ButtonRole.ActionRole)
+        box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        if show_btn is not None and box.clickedButton() is show_btn:
+            self._show_groups(missing)
+            self.hobby_town.setFocus()
 
     def _move_worker(self, moves: list[core.Move], root: Path, info: dict, mode: str = core.MODE_MOVE) -> None:
         paths = [m.source for m in moves] + [m.target for m in moves]
