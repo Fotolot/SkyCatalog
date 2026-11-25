@@ -127,3 +127,35 @@ class GroupingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VideoInfoTests(unittest.TestCase):
+    def test_duration_resolution_fps(self):
+        import struct
+        from tests.helpers import _atom
+
+        def full(kind, payload):
+            return _atom(kind, b"\0\0\0\0" + payload)
+        mvhd = full(b"mvhd", struct.pack(">IIII", 3000000000, 3000000000, 1000, 12500) + b"\0" * 80)
+        tkhd = full(b"tkhd", b"\0" * 72 + struct.pack(">II", 3840 << 16, 2160 << 16))
+        mdhd = full(b"mdhd", struct.pack(">IIII", 0, 0, 30000, 375000) + b"\0" * 4)
+        hdlr = full(b"hdlr", b"\0\0\0\0vide" + b"\0" * 12)
+        stts = full(b"stts", struct.pack(">III", 1, 375, 1000))
+        trak = _atom(b"trak", tkhd + _atom(b"mdia", mdhd + hdlr + _atom(b"minf", _atom(b"stbl", stts))))
+        mak = _atom(b"\xa9mak", struct.pack(">HH", 3, 0) + b"DJI")
+        moov = _atom(b"moov", mvhd + trak + _atom(b"udta", mak))
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "DJI_0001.MP4"
+            p.write_bytes(_atom(b"ftyp", b"isom\0\0\0\0") + moov)
+            info = metadata.read_video_info(p)
+        self.assertEqual(info["duration_s"], 12.5)
+        self.assertEqual((info["width"], info["height"]), (3840, 2160))
+        self.assertEqual(info["fps"], 30.0)
+        self.assertEqual(info["make"], "DJI")
+
+    def test_photo_info_dimensions(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = make_jpeg(Path(d) / "a.jpg", -10.5, -20.25, "2026:01:02 03:04:05")
+            info = metadata.read_photo_info(p)
+        self.assertAlmostEqual(info["gps"][0], -10.5, places=4)
+        self.assertAlmostEqual(info["gps"][1], -20.25, places=4)
