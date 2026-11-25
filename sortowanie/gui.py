@@ -175,6 +175,15 @@ class App(tk.Tk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._poll_events)
 
+    def _initial_sash(self) -> None:
+        """Prawy panel (kategoria, formularz, podgląd) zajmuje na starcie ok. 42% szerokości."""
+        try:
+            width = self._panes.winfo_width()
+            if width > 100:
+                self._panes.sashpos(0, int(width * 0.58))
+        except tk.TclError:
+            pass
+
     def _fit_to_screen(self) -> None:
         """Rozmiar okna dopasowany do ekranu (także małe ekrany i skalowanie Windows)."""
         sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
@@ -227,9 +236,9 @@ class App(tk.Tk):
         cols = ("typ", "pliki", "data", "lokalizacja", "kategoria")
         self.tree = ttk.Treeview(left, columns=cols, show="tree headings", selectmode="extended")
         self.tree.heading("#0", text="Nazwa")
-        self.tree.column("#0", width=200, stretch=False)
-        for col, title, width in (("typ", "Typ", 70), ("pliki", "Pliki", 110), ("data", "Data wykonania", 140),
-                                  ("lokalizacja", "Lokalizacja z GPS", 220), ("kategoria", "Kategoria", 220)):
+        self.tree.column("#0", width=130, stretch=False)
+        for col, title, width in (("typ", "Typ", 60), ("pliki", "Pliki", 95), ("data", "Data wykonania", 130),
+                                  ("lokalizacja", "Lokalizacja z GPS", 190), ("kategoria", "Kategoria", 150)):
             self.tree.heading(col, text=title)
             self.tree.column(col, width=width, stretch=col in ("lokalizacja", "kategoria"))
         self.tree.tag_configure("unassigned", foreground="#b00020")
@@ -255,6 +264,8 @@ class App(tk.Tk):
         right.columnconfigure(0, weight=1)
         right.rowconfigure(2, weight=1)
         panes.add(right, weight=2)
+        self._panes = panes
+        self.after(200, self._initial_sash)
 
         cat = ttk.LabelFrame(right, text="Kategoria lotu (wybierz ręcznie)", padding=8)
         cat.grid(row=0, column=0, sticky="ew")
@@ -274,12 +285,12 @@ class App(tk.Tk):
             cb = ttk.Checkbutton(boxes, text=label, variable=self.category_var, onvalue=key,
                                  offvalue=NO_CATEGORY, command=self._on_category_clicked,
                                  style="Category.TCheckbutton")
-            cb.pack(side=tk.LEFT, padx=(0, 14))
+            cb.pack(anchor="w", pady=1)
             self.category_buttons.append(cb)
         info = ttk.Frame(cat)
         info.pack(fill=tk.X, pady=(6, 0))
         ttk.Label(info, textvariable=self.selection_info_var, style="Hint.TLabel",
-                  wraplength=430, justify="left").pack(side=tk.LEFT, fill=tk.X, expand=True)
+                  wraplength=380, justify="left").pack(side=tk.LEFT, fill=tk.X, expand=True)
         self.split_btn = ttk.Button(info, text="Wydziel jako osobne", command=self._split_selection)
 
         # Formularze
@@ -302,7 +313,7 @@ class App(tk.Tk):
         psb = ttk.Scrollbar(prev, orient=tk.VERTICAL, command=self.preview.yview)
         psb.grid(row=0, column=1, sticky="ns")
         self.preview.configure(yscrollcommand=psb.set)
-        self.errors_label = ttk.Label(prev, style="Error.TLabel", wraplength=480, justify="left")
+        self.errors_label = ttk.Label(prev, style="Error.TLabel", wraplength=400, justify="left")
         self.errors_label.grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         # ── Dół okna
@@ -327,14 +338,14 @@ class App(tk.Tk):
     def _build_forms(self, parent: ttk.Frame) -> None:
         # Brak kategorii
         self.empty_form = ttk.Frame(parent)
-        self.empty_label = ttk.Label(self.empty_form, style="Hint.TLabel", wraplength=480, justify="left",
+        self.empty_label = ttk.Label(self.empty_form, style="Hint.TLabel", wraplength=400, justify="left",
                                      text="Wybierz kategorię powyżej, aby wyświetlić pola formularza.")
         self.empty_label.pack(anchor="w")
 
         # Hobby
         self.hobby_form = ttk.Frame(parent)
         self.hobby_form.columnconfigure(1, weight=1)
-        ttk.Label(self.hobby_form, style="Hint.TLabel", wraplength=480, justify="left", text=(
+        ttk.Label(self.hobby_form, style="Hint.TLabel", wraplength=400, justify="left", text=(
             "Miejscowość i pobliski obiekt są rozpoznawane z GPS każdego materiału osobno. "
             "Jeśli w promieniu nie ma charakterystycznego obiektu, jego poziom jest pomijany.\n"
             "Struktura: Hobby / Miejscowość / [Obiekt] / WIDEO | Zdjęcia")
@@ -350,13 +361,13 @@ class App(tk.Tk):
             "Opcjonalnie – dla materiałów, przy których nie rozpoznano obiektu (np. bez internetu). "
             "Pozostaw puste, aby pominąć poziom obiektu.")
         ).grid(row=4, column=1, sticky="w", padx=(6, 0))
-        self.hobby_summary = ttk.Label(self.hobby_form, wraplength=480, justify="left")
+        self.hobby_summary = ttk.Label(self.hobby_form, wraplength=400, justify="left")
         self.hobby_summary.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         dec = ttk.LabelFrame(self.hobby_form, text="Do zatwierdzenia", padding=6)
         dec.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
         dec.columnconfigure(0, weight=1)
-        ttk.Label(dec, style="Hint.TLabel", wraplength=470, justify="left", text=(
+        ttk.Label(dec, style="Hint.TLabel", wraplength=390, justify="left", text=(
             "Obiekt w pobliżu jest tylko propozycją – GPS drona nie dowodzi, że obiekt jest w kadrze. "
             "Zatwierdź go, wybierz inny lub wybierz „bez obiektu”. Przy niejednoznacznej miejscowości "
             "wybierz właściwą. Decyzje są zapamiętywane dla tego miejsca.")
@@ -406,7 +417,7 @@ class App(tk.Tk):
         self.place_suggest_btn = ttk.Button(f, command=self._use_place_suggestion)
         self.place_suggest_btn.grid(row=3, column=2, sticky="e", padx=(6, 0), pady=(8, 0))
 
-        self.detail_hint = ttk.Label(f, style="Hint.TLabel", wraplength=480, justify="left")
+        self.detail_hint = ttk.Label(f, style="Hint.TLabel", wraplength=400, justify="left")
         self.detail_hint.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 0))
 
     # ══ Wybór folderów i wczytywanie ═══════════════════════════
@@ -510,7 +521,8 @@ class App(tk.Tk):
             elif p.ambiguous:
                 loc = "do wyboru: " + " / ".join(p.town_candidates[:4])
             else:
-                loc = "nie rozpoznano" + (" (brak połączenia)" if p.error else "")
+                offline = self.settings.get("offline")
+                loc = "nie rozpoznano" + (" (tryb offline)" if offline else " (brak połączenia)" if p.error else "")
             if p.town_source.startswith("cache"):
                 loc += " [cache]"
         a = self.assignment_of.get(g.key)
