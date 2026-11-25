@@ -8,28 +8,22 @@ import threading
 from pathlib import Path
 
 DEFAULT_SETTINGS: dict = {
-    # Rozpoznawanie miejscowości: "nominatim", "photon" lub "brak"
-    "reverse_provider": "nominatim",
-    "nominatim_url": "https://nominatim.openstreetmap.org",
-    "photon_url": "https://photon.komoot.io",
-    # Wyszukiwanie obiektów w pobliżu: "overpass" lub "brak"
-    "poi_provider": "overpass",
+    # Endpoint Overpass API – można wskazać własny serwer (bez zmiany kodu).
+    # Zmienna środowiskowa SORTOWANIE_OVERPASS_URL ma pierwszeństwo.
     "overpass_url": "https://overpass-api.de/api/interpreter",
+    # Promień wyszukiwania obiektów wokół GPS materiału (metry)
     "poi_radius_m": 250,
-    # Opcjonalny e-mail kontaktowy dołączany do nagłówka User-Agent
-    # (zalecane przez zasady korzystania z Nominatim). Domyślnie pusty.
+    # Opcjonalny kontakt dołączany do nagłówka User-Agent. Domyślnie pusty.
     "contact_email": "",
-    # Tryb offline: tylko zapisane wyniki z cache, bez zapytań do internetu
+    # Tryb offline: tylko zapisane dane i decyzje, bez zapytań do internetu
     "offline": False,
     "language": "pl",
-    "cache_days": 365,
+    # Po ilu dniach dane OSM w cache są odświeżane (gdy jest internet)
+    "cache_days": 180,
     # Ostatnio używane foldery
     "last_source": "",
     "target_root": "",
 }
-
-PROVIDERS_REVERSE = ("nominatim", "photon", "brak")
-PROVIDERS_POI = ("overpass", "brak")
 
 
 def app_data_dir() -> Path:
