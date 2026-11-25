@@ -1,4 +1,6 @@
-from sortowanie.gui import main
+import sys
+
+from sortowanie.ui.app import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

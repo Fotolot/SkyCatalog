@@ -62,3 +62,11 @@ ustawienia.json
 cache_osm.json
 decyzje_lokalizacji.json
 *.tmp
+
+# Lokalny katalog materiałów, miniatury i cache kafelków mapy
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+miniatury/
+kafelki/

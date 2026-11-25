@@ -1,0 +1,26 @@
+html, body, #map { height: 100%; margin: 0; padding: 0; }
+body { font: 13px "Segoe UI", system-ui, sans-serif; background: #e9ecef; }
+body.dark { background: #1e1f22; color: #e6e6e6; }
+
+/* Ciemny motyw: przyciemniony podkład (kafelki pozostają oryginalne na serwerze) */
+body.dark .leaflet-tile-pane { filter: brightness(0.62) invert(1) contrast(2.6) hue-rotate(200deg) saturate(0.35) brightness(0.72); }
+body.dark .leaflet-container { background: #1e1f22; }
+body.dark .leaflet-control-attribution { background: rgba(30, 31, 34, 0.85); color: #cfcfcf; }
+body.dark .leaflet-control-attribution a { color: #8ab4f8; }
+body.dark .leaflet-bar a { background: #2b2d31; color: #e6e6e6; border-color: #444; }
+
+.legend {
+  background: rgba(255, 255, 255, 0.92); padding: 6px 9px; border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); line-height: 1.55; min-width: 150px;
+}
+body.dark .legend { background: rgba(43, 45, 49, 0.94); color: #e6e6e6; }
+.legend .title { font-weight: 600; margin-bottom: 2px; }
+.legend .row { display: flex; align-items: center; gap: 7px; }
+.legend svg { flex: 0 0 auto; }
+
+#banner {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 1000;
+  background: #fff3cd; color: #5c4400; border: 1px solid #e0c36b; border-radius: 6px;
+  padding: 6px 12px; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); max-width: 70%;
+}
+body.dark #banner { background: #4a3d10; color: #ffe7a3; border-color: #7a6420; }

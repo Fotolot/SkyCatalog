@@ -1,4 +1,4 @@
-"""Ustawienia aplikacji przechowywane lokalnie w %APPDATA%\\Sortowanie."""
+"""Ustawienia aplikacji przechowywane lokalnie w %APPDATA%\\SkyCatalog."""
 
 from __future__ import annotations
 
@@ -20,6 +20,18 @@ DEFAULT_SETTINGS: dict = {
     "language": "pl",
     # Po ilu dniach dane OSM w cache są odświeżane (gdy jest internet)
     "cache_days": 180,
+    # ── Mapa materiałów ──
+    # Dostawca kafelków podkładu (konfigurowalny bez zmiany kodu). Domyślnie standardowe
+    # kafelki OSM – zgodnie z https://operations.osmfoundation.org/policies/tiles/
+    "tile_url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    "tile_attribution": "© OpenStreetMap contributors",
+    "tile_max_zoom": 19,
+    # Motyw aplikacji i mapy: "systemowy", "jasny" lub "ciemny"
+    "theme": "systemowy",
+    # Skanowanie komputera: puste = wszystkie lokalne dyski stałe i wymienne
+    "scan_drives": [],
+    "scan_network_drives": False,
+    "scan_exclusions": [],
     # Ostatnio używane foldery
     "last_source": "",
     "target_root": "",
@@ -28,7 +40,13 @@ DEFAULT_SETTINGS: dict = {
 
 def app_data_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
-    return Path(base) / "Sortowanie"
+    return Path(base) / "SkyCatalog"
+
+
+def local_data_dir() -> Path:
+    """Dane lokalne tej maszyny (katalog, miniatury, kafelki): %LOCALAPPDATA%\\SkyCatalog."""
+    base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home() / ".cache")
+    return Path(base) / "SkyCatalog"
 
 
 def settings_path() -> Path:
