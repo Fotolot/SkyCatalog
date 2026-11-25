@@ -5,18 +5,30 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QByteArray, Qt, QTimer
 from PySide6.QtGui import QAction, QColor, QIcon, QPalette
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStyleFactory, QTabWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QSplitter, QStyleFactory, QTabWidget
 
 from .. import APP_NAME, __version__
 from .. import catalog as cat
 from ..config import Settings
+from .common import SPLITTER_PREFIX
 from .dialogs import SettingsDialog
+
+# Uchwyty rozdzielaczy: dobrze widoczne i podświetlane – „złap i przeciągnij”
+SPLITTER_STYLE = """
+QSplitter::handle { background: palette(midlight); }
+QSplitter::handle:horizontal { width: 7px; margin: 0 1px; border-left: 1px solid palette(mid);
+                               border-right: 1px solid palette(mid); }
+QSplitter::handle:vertical { height: 7px; margin: 1px 0; border-top: 1px solid palette(mid);
+                             border-bottom: 1px solid palette(mid); }
+QSplitter::handle:hover, QSplitter::handle:pressed { background: palette(highlight); }
+"""
 
 
 def apply_theme(app: QApplication, mode: str) -> bool:
     """Ustawia motyw („systemowy” / „jasny” / „ciemny”). Zwraca True dla ciemnego."""
+    app.setStyleSheet(SPLITTER_STYLE)
     if mode == "systemowy":
         app.setStyle(QStyleFactory.create("windowsvista") or QStyleFactory.create("Fusion"))
         app.setPalette(app.style().standardPalette())
@@ -71,7 +83,54 @@ class MainWindow(QMainWindow):
         quit_act = QAction("Zamknij", self)
         quit_act.triggered.connect(self.close)
         menu.addAction(quit_act)
-        self._fit_to_screen()
+        view = self.menuBar().addMenu("Widok")
+        reset = QAction("Przywróć domyślny układ paneli", self)
+        reset.triggered.connect(self.reset_layout)
+        view.addAction(reset)
+        view.addAction(QAction("Panele zmieniasz, przeciągając uchwyty między nimi", self, enabled=False))
+        self.setMinimumSize(640, 420)
+        self._default_layout = self._splitter_states()
+        if not self._restore_layout():
+            self._fit_to_screen()
+
+    # ── Układ okna (zapamiętywany między uruchomieniami) ──
+    def _splitters(self) -> list[QSplitter]:
+        return [s for s in self.findChildren(QSplitter) if s.objectName().startswith(SPLITTER_PREFIX)]
+
+    def _splitter_states(self) -> dict[str, QByteArray]:
+        return {s.objectName(): s.saveState() for s in self._splitters()}
+
+    def _restore_layout(self) -> bool:
+        state = self.settings.get("ui_state") or {}
+        if not isinstance(state, dict) or not state:
+            return False
+        geometry = state.get("okno")
+        restored = False
+        if isinstance(geometry, str) and geometry:
+            restored = self.restoreGeometry(QByteArray.fromBase64(geometry.encode("ascii")))
+        for s in self._splitters():
+            value = state.get(s.objectName())
+            if isinstance(value, str) and value:
+                if s.restoreState(QByteArray.fromBase64(value.encode("ascii"))) and s.objectName() == "split_map_columns":
+                    self.map_tab._sized = True        # nie nadpisuj układu użytkownika domyślnymi proporcjami
+        return restored
+
+    def _save_layout(self) -> None:
+        state = {name: bytes(value.toBase64()).decode("ascii") for name, value in self._splitter_states().items()}
+        state["okno"] = bytes(self.saveGeometry().toBase64()).decode("ascii")
+        self.settings.set("ui_state", state)
+
+    def reset_layout(self) -> None:
+        for s in self._splitters():
+            default = self._default_layout.get(s.objectName())
+            if default is not None:
+                s.restoreState(default)
+        w = self.map_tab._split.width()
+        if w > 200:
+            self.map_tab._split.setSizes([int(w * 0.24), int(w * 0.50), w - int(w * 0.24) - int(w * 0.50)])
+        self.settings.set("ui_state", {})
+        if not self.isMaximized():
+            self._fit_to_screen()
 
     def _fit_to_screen(self) -> None:
         screen = self.screen().availableGeometry()
@@ -99,6 +158,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
         self.sort_tab.save_state()
+        self._save_layout()
         self.settings.save()
         self.map_tab.shutdown()
         super().closeEvent(event)

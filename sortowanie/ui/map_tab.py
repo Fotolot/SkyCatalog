@@ -20,7 +20,7 @@ from ..config import Settings
 from ..mapgeom import thin_latlon
 from ..scanner import Scanner, ScanProgress
 from ..tiles import provider_from_settings
-from .common import DateField, Poster, materials_word, menu_text, plain_label
+from .common import DateField, Poster, flow, materials_word, menu_text, plain_label, scrollable, shrinkable, splitter
 from .dialogs import ScanSettingsDialog, SkipsDialog
 from .preview_panel import PreviewPanel
 from .webmap import MapWidget
@@ -77,15 +77,7 @@ class MapTab(QWidget):
         self.btn_skips = QPushButton("Pominięte…")
         self.btn_skips.clicked.connect(self._show_skips)
         g = QVBoxLayout(scan_box)
-        row = QHBoxLayout()
-        row.addWidget(self.btn_scan)
-        row.addWidget(self.btn_cancel)
-        row.addWidget(self.btn_resume)
-        g.addLayout(row)
-        row2 = QHBoxLayout()
-        row2.addWidget(self.btn_scan_settings)
-        row2.addWidget(self.btn_skips)
-        g.addLayout(row2)
+        g.addWidget(flow(self.btn_scan, self.btn_cancel, self.btn_resume, self.btn_scan_settings, self.btn_skips))
         g.addWidget(self.scan_progress)
         g.addWidget(self.scan_status)
         g.addWidget(self.scan_folder)
@@ -116,6 +108,7 @@ class MapTab(QWidget):
             w.currentIndexChanged.connect(lambda _i: self._filter_timer.start())
         self.search.textChanged.connect(lambda _t: self._filter_timer.start())
         f = QFormLayout(flt)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         kinds = QHBoxLayout()
         kinds.addWidget(self.cb_photos)
         kinds.addWidget(self.cb_videos)
@@ -130,35 +123,34 @@ class MapTab(QWidget):
 
         # Listy
         self.lists = QTabWidget(self)
+        self.lists.setUsesScrollButtons(True)
+        self.lists.tabBar().setElideMode(Qt.TextElideMode.ElideRight)
+        self.lists.setMinimumWidth(120)
         self.list_located = self._make_list()
         self.list_missing = self._make_list()
         self.lists.addTab(self.list_located, "Na mapie")
         self.lists.addTab(self.list_missing, "Bez lokalizacji")
         self.list_info = plain_label("", hint=True, wrap=True)
 
-        left = QWidget(self)
-        ll = QVBoxLayout(left)
-        ll.setContentsMargins(0, 0, 0, 0)
-        ll.addWidget(scan_box)
-        ll.addWidget(flt)
-        ll.addWidget(self.lists, 1)
-        ll.addWidget(self.list_info)
+        lists_box = QWidget(self)
+        lb = QVBoxLayout(lists_box)
+        lb.setContentsMargins(0, 0, 0, 0)
+        lb.addWidget(self.lists, 1)
+        lb.addWidget(self.list_info)
+        left = splitter(Qt.Orientation.Vertical, "map_left", scrollable(scan_box), scrollable(flt), lists_box,
+                        sizes=[170, 300, 400], stretch=[0, 0, 1])
 
         # Mapa
         center = QWidget(self)
         cl = QVBoxLayout(center)
         cl.setContentsMargins(0, 0, 0, 0)
-        bar = QHBoxLayout()
         self.btn_all = QPushButton("Pokaż wszystkie materiały")
         self.btn_all.clicked.connect(self.fit_all)
         self.btn_fit_sel = QPushButton("Przybliż do wybranego")
         self.btn_fit_sel.clicked.connect(lambda: self.selected_id and self.select(self.selected_id, fit=True))
-        bar.addWidget(self.btn_all)
-        bar.addWidget(self.btn_fit_sel)
-        bar.addStretch(1)
-        self.map_status = plain_label("", hint=True)
-        bar.addWidget(self.map_status)
-        cl.addLayout(bar)
+        self.map_status = shrinkable(plain_label("", hint=True))
+        cl.addWidget(flow(self.btn_all, self.btn_fit_sel))
+        cl.addWidget(self.map_status)
         self.map = MapWidget(center)
         self.map.message.connect(self._on_map_message)
         cl.addWidget(self.map, 1)
@@ -167,14 +159,8 @@ class MapTab(QWidget):
         self.preview = PreviewPanel(self.catalog, self)
         self.preview.fitRequested.connect(lambda mid: self.select(mid, fit=True))
 
-        split = QSplitter(Qt.Orientation.Horizontal, self)
-        split.addWidget(left)
-        split.addWidget(center)
-        split.addWidget(self.preview)
-        split.setStretchFactor(0, 0)
-        split.setStretchFactor(1, 3)
-        split.setStretchFactor(2, 1)
-        split.setSizes([330, 820, 360])
+        split = splitter(Qt.Orientation.Horizontal, "map_columns", left, center, self.preview,
+                         sizes=[330, 820, 360], stretch=[0, 3, 1])
         self._split = split
         self._sized = False
         lay = QVBoxLayout(self)

@@ -23,7 +23,8 @@ from ..config import Settings
 from ..geo import DecisionStore, LocationService, OsmCache, Place, SOURCE_DECISION, SOURCE_NONE
 from ..media import MediaGroup, scan_source
 from ..osm import ATTRIBUTION, ATTRIBUTION_URL, TownResult
-from .common import DateField, Poster, files_word, groups_word, human_size, plain_label
+from .common import (DateField, Poster, files_word, flow, groups_word, human_size, plain_label, scrollable, shrinkable,
+                     splitter)
 
 NO_CATEGORY = None
 SCOPE_ALL, SCOPE_SELECTED = "all", "selected"
@@ -157,13 +158,7 @@ class SortTab(QWidget):
         self.mode_copy.toggled.connect(lambda _c: self._on_mode_changed())
         self.show_imported = QCheckBox("Pokaż także materiały już zaimportowane")
         self.show_imported.toggled.connect(lambda _c: self._apply_imported_filter())
-        mode_row = QHBoxLayout()
-        mode_row.addWidget(QLabel("Tryb:"))
-        mode_row.addWidget(self.mode_move)
-        mode_row.addWidget(self.mode_copy)
-        mode_row.addStretch(1)
-        mode_row.addWidget(self.show_imported)
-        fl.addLayout(mode_row, 2, 0, 1, 4)
+        fl.addWidget(flow(QLabel("Tryb:"), self.mode_move, self.mode_copy, self.show_imported), 2, 0, 1, 4)
 
         # Pasek wykrytej karty pamięci
         self.card_banner = QFrame(self)
@@ -200,13 +195,8 @@ class SortTab(QWidget):
         self.geo_status = plain_label("", wrap=True, hint=True)
         ll = QVBoxLayout(left)
         ll.addWidget(self.tree, 1)
-        row = QHBoxLayout()
-        row.addWidget(b_all)
-        row.addWidget(b_un)
-        row.addStretch(1)
-        row.addWidget(self.retry_btn)
-        ll.addLayout(row)
-        ll.addWidget(self.geo_status)
+        ll.addWidget(flow(b_all, b_un, self.retry_btn))
+        ll.addWidget(shrinkable(self.geo_status))
 
         # Kategoria
         catbox = QGroupBox("Kategoria lotu (wybierz ręcznie)", self)
@@ -249,7 +239,7 @@ class SortTab(QWidget):
         self.forms.addWidget(self._build_detail())
 
         # Podgląd
-        prev = QGroupBox("Podgląd docelowej struktury folderów", self)
+        prev = QGroupBox("Podgląd struktury folderów", self)
         self.preview = QTreeWidget()
         self.preview.setHeaderLabels(["Folder", "Zawartość"])
         self.preview.setColumnWidth(0, 300)
@@ -258,21 +248,12 @@ class SortTab(QWidget):
         pl_.addWidget(self.preview, 1)
         pl_.addWidget(self.errors_label)
 
-        right = QWidget(self)
-        rl = QVBoxLayout(right)
-        rl.setContentsMargins(0, 0, 0, 0)
-        rl.addWidget(catbox)
-        rl.addWidget(self.form_box)
-        rl.addWidget(prev, 1)
+        # Każdy panel można poszerzać/zwężać przeciągając uchwyty; za mało miejsca = pasek przewijania
+        right = splitter(Qt.Orientation.Vertical, "sort_right", scrollable(catbox), scrollable(self.form_box), prev,
+                         sizes=[190, 260, 260], stretch=[0, 1, 1])
+        split = splitter(Qt.Orientation.Horizontal, "sort_columns", left, right,
+                         sizes=[760, 540], stretch=[3, 2])
 
-        split = QSplitter(Qt.Orientation.Horizontal, self)
-        split.addWidget(left)
-        split.addWidget(right)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setSizes([760, 540])
-
-        bottom = QHBoxLayout()
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
         self.undo_btn = QPushButton("Cofnij ostatni import")
@@ -280,23 +261,25 @@ class SortTab(QWidget):
         self.move_btn = QPushButton("Przenieś materiały")
         self.move_btn.setEnabled(False)
         self.move_btn.clicked.connect(self._move)
+        self.progress.setMinimumWidth(60)
+        bottom = QHBoxLayout()
         bottom.addWidget(self.progress, 1)
-        bottom.addWidget(self.undo_btn)
-        bottom.addWidget(self.move_btn)
+        bottom.addWidget(flow(self.undo_btn, self.move_btn), 0)
         status_row = QHBoxLayout()
-        self.status = plain_label("Wybierz folder importu (np. kartę pamięci) i kliknij „Wczytaj”.")
-        self.net_status = plain_label("", hint=True)
-        credit = QLabel(f'Dane lokalizacji: <a href="{ATTRIBUTION_URL}">{ATTRIBUTION}</a>')
+        self.status = shrinkable(plain_label("Wybierz folder importu (np. kartę pamięci) i kliknij „Wczytaj”."))
+        self.net_status = shrinkable(plain_label("", hint=True))
+        credit = shrinkable(QLabel(f'Dane lokalizacji: <a href="{ATTRIBUTION_URL}">{ATTRIBUTION}</a>'))
         credit.setOpenExternalLinks(True)
-        status_row.addWidget(self.status, 1)
-        status_row.addWidget(self.net_status)
-        status_row.addWidget(credit)
+        credit.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        status_row.addWidget(self.status, 3)
+        status_row.addWidget(self.net_status, 1)
+        status_row.addWidget(credit, 2)
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.addWidget(self.card_banner)
-        lay.addWidget(folders)
-        lay.addWidget(split, 1)
+        lay.addWidget(splitter(Qt.Orientation.Vertical, "sort_main", scrollable(folders), split,
+                               sizes=[130, 700], stretch=[0, 1]), 1)
         lay.addLayout(bottom)
         lay.addLayout(status_row)
         QShortcut(QKeySequence.StandardKey.SelectAll, self.tree, activated=self.tree.selectAll)
@@ -304,6 +287,7 @@ class SortTab(QWidget):
     def _build_hobby(self) -> QWidget:
         w = QWidget()
         f = QFormLayout(w)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         f.addRow(plain_label("Miejscowość i pobliski obiekt są rozpoznawane z GPS każdego materiału osobno. "
                              "Jeśli w promieniu nie ma charakterystycznego obiektu, jego poziom jest pomijany.\n"
                              "Struktura: Hobby / Miejscowość / [Obiekt] / WIDEO | Zdjęcia", wrap=True, hint=True))
@@ -347,6 +331,7 @@ class SortTab(QWidget):
     def _build_detail(self) -> QWidget:
         w = QWidget()
         f = QFormLayout(w)
+        f.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         self.existing_label = QLabel("Dołącz do istniejącego:")
         self.existing_combo = QComboBox()
         self.existing_combo.activated.connect(self._on_existing_selected)

@@ -34,6 +34,8 @@ DEFAULT_SETTINGS: dict = {
     "scan_exclusions": [],
     # Import: "przenieś" albo "kopiuj" (karta pamięci pozostaje bez zmian)
     "import_mode": "przenieś",
+    # Układ okna i paneli (zapamiętywany przy zamknięciu)
+    "ui_state": {},
     # Ostatnio używane foldery
     "last_source": "",
     "target_root": "",

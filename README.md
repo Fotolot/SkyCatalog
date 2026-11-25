@@ -68,6 +68,16 @@ Zasady:
 - **Bezpieczeństwo** – istniejące pliki nigdy nie są nadpisywane; ostatni import można
   cofnąć przyciskiem „Cofnij ostatni import”.
 
+## Układ okna
+
+* Wszystkie panele można poszerzać i zwężać, przeciągając uchwyty między nimi (podświetlają się
+  po najechaniu myszą) – w poziomie i w pionie: lista materiałów, kategoria, formularz, podgląd
+  struktury; skanowanie, filtry, listy, mapa i panel podglądu; obraz/film i szczegóły.
+* W wąskim oknie (np. na 1/3 ekranu) panele, które się nie mieszczą, mają paski przewijania,
+  przyciski przechodzą do kolejnego wiersza, a opisy pól w formularzach – nad pola.
+* Układ i rozmiar okna są zapamiętywane po zamknięciu programu.
+  **Widok → Przywróć domyślny układ paneli** przywraca ustawienia początkowe.
+
 ## Import z karty SD
 
 * Po włożeniu karty pamięci (dysk wymienny z folderem `DCIM`) nad zakładką sortowania pojawia się
