@@ -90,6 +90,17 @@ def suggest_date(groups: list[MediaGroup]) -> str:
     return min(dates).strftime("%Y-%m-%d") if dates else ""
 
 
+def town_options(groups: list[MediaGroup], places: dict[str, Place]) -> list[str]:
+    """Propozycje miejscowości dla Eventów/Zleceń: rozpoznane najpierw, potem niejednoznaczne."""
+    sure = [places[g.key].town for g in groups if g.key in places and places[g.key].town]
+    ordered = sorted(set(sure), key=lambda t: -sure.count(t))
+    for g in groups:
+        p = places.get(g.key)
+        if p is not None:
+            ordered += [c for c in p.town_candidates if c not in ordered]
+    return ordered
+
+
 def suggest_town(groups: list[MediaGroup], places: dict[str, Place]) -> str:
     """Najczęściej rozpoznana miejscowość wśród grup."""
     counter: dict[str, int] = {}
@@ -101,7 +112,7 @@ def suggest_town(groups: list[MediaGroup], places: dict[str, Place]) -> str:
 
 
 def is_pending(group: MediaGroup, places: dict[str, Place], need_object: bool = False) -> bool:
-    """Grupa ma GPS, ale rozpoznawanie lokalizacji (i ew. obiektu) jeszcze trwa."""
+    """Grupa ma GPS, ale rozpoznawanie lokalizacji (i ew. obiektów) jeszcze trwa."""
     if group.gps is None:
         return False
     place = places.get(group.key)
@@ -123,12 +134,21 @@ def event_folder_name(assignment: Assignment) -> str | None:
 def hobby_location(group: MediaGroup, place: Place | None, assignment: Assignment) -> tuple[str | None, str | None]:
     """(miejscowość, obiekt) dla Hobby.
 
-    Wartości z GPS mają pierwszeństwo. Ręcznie wpisana miejscowość (``assignment.place``)
-    i obiekt (``assignment.name``) są używane tylko wtedy, gdy GPS/internet ich nie dostarczył.
+    - miejscowość: rozpoznana z GPS lub wybrana przez użytkownika; ręczna miejscowość
+      (``assignment.place``) tylko dla materiałów bez GPS lub bez wyniku,
+    - obiekt: wyłącznie zatwierdzony przez użytkownika (GPS drona nie dowodzi, że obiekt
+      jest w kadrze); obiekt wpisany ręcznie (``assignment.name``) tylko, gdy nie było
+      propozycji, a użytkownik go nie odrzucił.
     """
     manual_obj = assignment.name.strip() or None
-    if place and place.town:
-        return place.town, place.object_name or manual_obj
+    if place is not None and place.town:
+        if place.object_choice:
+            return place.town, place.object_name
+        if place.object_choice == "" or place.objects:
+            return place.town, None
+        return place.town, manual_obj
+    if place is not None and place.ambiguous:
+        return None, None
     manual_town = assignment.place.strip()
     return (manual_town or None), (manual_obj if manual_town else None)
 
@@ -139,6 +159,8 @@ def relative_dir(group: MediaGroup, assignment: Assignment | None, place: Place 
         return None
     root = ROOT_FOLDERS[assignment.category]
     if assignment.category == CATEGORY_HOBBY:
+        if place is not None and place.needs_object_decision:
+            return None
         town, obj = hobby_location(group, place, assignment)
         town = sanitize_component(town or "")
         if not town:
@@ -166,11 +188,17 @@ def validate_assignment(assignment: Assignment, groups: list[MediaGroup],
         pending = [g for g in groups if is_pending(g, places, need_object=True)]
         if pending:
             errors.append(f"{label}: trwa rozpoznawanie lokalizacji (grupy: {len(pending)}).")
-        missing = [g for g in groups if not is_pending(g, places, need_object=True)
+        ready = [g for g in groups if not is_pending(g, places, need_object=True)]
+        ambiguous = [g for g in ready if (p := places.get(g.key)) is not None and p.ambiguous]
+        if ambiguous:
+            errors.append(f"{label}: wybierz miejscowość z listy propozycji (grupy: {len(ambiguous)}).")
+        undecided = [g for g in ready if (p := places.get(g.key)) is not None and p.needs_object_decision]
+        if undecided:
+            errors.append(f"{label}: zatwierdź albo odrzuć proponowane obiekty (grupy: {len(undecided)}).")
+        missing = [g for g in ready if g not in ambiguous
                    and not hobby_location(g, places.get(g.key), assignment)[0]]
         if missing:
-            errors.append(f"{label}: brak miejscowości (grupy: {len(missing)}) – "
-                          "wpisz miejscowość ręcznie.")
+            errors.append(f"{label}: brak miejscowości (grupy: {len(missing)}) – wpisz miejscowość ręcznie.")
         return errors
 
     what = "wydarzenia" if assignment.category == CATEGORY_EVENT else "zlecenia"

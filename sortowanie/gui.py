@@ -6,14 +6,17 @@ import ctypes
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from . import APP_NAME, __version__, core
 from . import planner as pl
 from .config import Settings
-from .geo import GeoCache, LocationService, Place, SOURCE_NONE
+from .geo import DecisionStore, LocationService, OsmCache, Place, SOURCE_DECISION, SOURCE_NONE
+from .osm import ATTRIBUTION, ATTRIBUTION_URL, TownResult
 from .media import MediaGroup, scan_source
 from .widgets import DateField, SettingsDialog
 
@@ -21,6 +24,7 @@ NO_CATEGORY = "-"  # wartość „odznaczona” dla pól wyboru kategorii
 SCOPE_ALL = "all"
 SCOPE_SELECTED = "selected"
 NEW_TARGET = "— nowe —"
+NO_OBJECT = "— bez obiektu —"
 
 
 def _enable_high_dpi() -> None:
@@ -60,28 +64,59 @@ def _files_word(n: int) -> str:
 
 
 class GeoWorker(threading.Thread):
-    """Wątek rozpoznający lokalizacje w tle (kolejka zadań, limit zapytań w HttpClient)."""
+    """Wątek w tle z kolejką zadań lokalizacji.
+
+    Zadania są zbierane w partie: miejscowości rozpoznawane po kolei (kolejne punkty w
+    pobranym wielokącie miejscowości nie wymagają zapytania), a obiekty dla wszystkich
+    punktów partii pobierane wspólnymi zapytaniami o brakujące kafelki.
+    """
+
+    BATCH_DELAY = 0.3
 
     def __init__(self, service: LocationService, events: queue.Queue) -> None:
         super().__init__(daemon=True)
         self.service = service
         self.events = events
         self.jobs: queue.Queue = queue.Queue()
+        service.client.on_status = lambda text: events.put(("net_status", text))
 
     def submit(self, import_id: int, kind: str, key: str, gps: tuple[float, float]) -> None:
         self.jobs.put((import_id, kind, key, gps))
 
+    def _drain(self) -> list:
+        jobs = [self.jobs.get()]
+        time.sleep(self.BATCH_DELAY)
+        while True:
+            try:
+                jobs.append(self.jobs.get_nowait())
+            except queue.Empty:
+                return jobs
+
     def run(self) -> None:
         while True:
-            import_id, kind, key, (lat, lon) = self.jobs.get()
-            try:
-                if kind == "town":
+            jobs = self._drain()
+            for import_id, kind, key, (lat, lon) in jobs:
+                if kind != "town":
+                    continue
+                try:
                     result, source, error = self.service.town(lat, lon)
-                else:
-                    result, source, error = self.service.nearby_object(lat, lon)
-            except Exception as exc:  # nie dopuszczamy do zatrzymania wątku
-                result, source, error = None, SOURCE_NONE, str(exc)
-            self.events.put((kind, import_id, key, result, source, error))
+                except Exception as exc:  # wątek nie może się zatrzymać
+                    result, source, error = TownResult(None, [], "błąd"), SOURCE_NONE, str(exc)
+                self.events.put(("town", import_id, key, result, source, error))
+            by_import: dict[int, list] = {}
+            for import_id, kind, key, (lat, lon) in jobs:
+                if kind == "poi":
+                    by_import.setdefault(import_id, []).append((key, lat, lon))
+            for import_id, points in by_import.items():
+                def deliver(key, cands, source, error, remembered, i=import_id):
+                    self.events.put(("poi", i, key, cands, source, error, remembered))
+                try:
+                    self.service.objects(points, deliver)
+                except Exception as exc:
+                    for key, _lat, _lon in points:
+                        deliver(key, [], SOURCE_NONE, str(exc), None)
+            if self.jobs.empty():
+                self.events.put(("net_status", ""))
 
 
 class App(tk.Tk):
@@ -92,8 +127,9 @@ class App(tk.Tk):
         self.minsize(1050, 680)
 
         self.settings = Settings()
-        self.cache = GeoCache()
-        self.geo = LocationService(self.settings, self.cache)
+        self.cache = OsmCache()
+        self.decisions = DecisionStore()
+        self.geo = LocationService(self.settings, self.cache, self.decisions)
         self.events: queue.Queue = queue.Queue()
         self.worker = GeoWorker(self.geo, self.events)
         self.worker.start()
@@ -105,7 +141,7 @@ class App(tk.Tk):
         self.assignment_of: dict[str, pl.Assignment | None] = {}
         self.places: dict[str, Place] = {}
         self.poi_requested: set[str] = set()
-        self.poi_failed: set[str] = set()   # obiektu nie sprawdzono (brak internetu i cache)
+        self._decision_rows: dict[str, tuple[str, list[str]]] = {}
         self.current: pl.Assignment | None = None
         self.plan: pl.ImportPlan | None = None
         self.busy = False
@@ -121,6 +157,8 @@ class App(tk.Tk):
         self.existing_var = tk.StringVar(value=NEW_TARGET)
         self.status_var = tk.StringVar(value="Wybierz folder importu (np. kartę pamięci) i kliknij „Wczytaj”.")
         self.geo_status_var = tk.StringVar()
+        self.net_status_var = tk.StringVar()
+        self.choice_var = tk.StringVar()
         self.selection_info_var = tk.StringVar()
 
         self._suspend = False         # blokada reakcji na programowe zmiany pól
@@ -266,7 +304,14 @@ class App(tk.Tk):
         self.undo_btn.grid(row=0, column=1)
         self.move_btn = ttk.Button(bottom, text="Przenieś materiały", command=self._move, state=tk.DISABLED)
         self.move_btn.grid(row=0, column=2, padx=(8, 0))
-        ttk.Label(main, textvariable=self.status_var, anchor="w").grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        status_row = ttk.Frame(main)
+        status_row.grid(row=3, column=0, sticky="ew", pady=(6, 0))
+        status_row.columnconfigure(0, weight=1)
+        ttk.Label(status_row, textvariable=self.status_var, anchor="w").grid(row=0, column=0, sticky="ew")
+        ttk.Label(status_row, textvariable=self.net_status_var, style="Hint.TLabel").grid(row=0, column=1, padx=12)
+        credit = ttk.Label(status_row, text=f"Dane lokalizacji: {ATTRIBUTION}", foreground="#0b57d0", cursor="hand2")
+        credit.grid(row=0, column=2, sticky="e")
+        credit.bind("<Button-1>", lambda _e: webbrowser.open(ATTRIBUTION_URL))
 
     def _build_forms(self, parent: ttk.Frame) -> None:
         # Brak kategorii
@@ -297,6 +342,31 @@ class App(tk.Tk):
         self.hobby_summary = ttk.Label(self.hobby_form, wraplength=480, justify="left")
         self.hobby_summary.grid(row=5, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
+        dec = ttk.LabelFrame(self.hobby_form, text="Do zatwierdzenia", padding=6)
+        dec.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        dec.columnconfigure(0, weight=1)
+        ttk.Label(dec, style="Hint.TLabel", wraplength=470, justify="left", text=(
+            "Obiekt w pobliżu jest tylko propozycją – GPS drona nie dowodzi, że obiekt jest w kadrze. "
+            "Zatwierdź go, wybierz inny lub wybierz „bez obiektu”. Przy niejednoznacznej miejscowości "
+            "wybierz właściwą. Decyzje są zapamiętywane dla tego miejsca.")
+        ).grid(row=0, column=0, columnspan=3, sticky="w")
+        self.decision_tree = ttk.Treeview(dec, columns=("co", "propozycja", "grupy", "status"),
+                                          show="headings", height=4, selectmode="browse")
+        for col, title, width in (("co", "Co", 85), ("propozycja", "Propozycja", 210),
+                                  ("grupy", "Grupy", 50), ("status", "Status", 150)):
+            self.decision_tree.heading(col, text=title)
+            self.decision_tree.column(col, width=width, stretch=col in ("propozycja", "status"))
+        self.decision_tree.tag_configure("todo", foreground="#b00020")
+        self.decision_tree.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        self.decision_tree.bind("<<TreeviewSelect>>", self._on_decision_selected)
+        self.choice_combo = ttk.Combobox(dec, textvariable=self.choice_var, state="readonly")
+        self.choice_combo.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(dec, text="Zatwierdź wybór", command=self._apply_decision).grid(row=2, column=1, padx=(6, 0), pady=(6, 0))
+        ttk.Button(dec, text="Bez obiektu", command=lambda: self._apply_decision(no_object=True)
+                   ).grid(row=2, column=2, padx=(6, 0), pady=(6, 0))
+        self._choice_values: list[str] = []
+        self._choice_ids: list[str] = []
+
         # Eventy / Zlecenia – wspólny układ, różne etykiety
         self.detail_form = ttk.Frame(parent)
         f = self.detail_form
@@ -320,7 +390,8 @@ class App(tk.Tk):
 
         self.place_label = ttk.Label(f, text="Miejscowość *")
         self.place_label.grid(row=3, column=0, sticky="w", pady=(8, 0))
-        ttk.Entry(f, textvariable=self.place_var).grid(row=3, column=1, sticky="ew", padx=(6, 0), pady=(8, 0))
+        self.place_combo = ttk.Combobox(f, textvariable=self.place_var)
+        self.place_combo.grid(row=3, column=1, sticky="ew", padx=(6, 0), pady=(8, 0))
         self.place_suggest_btn = ttk.Button(f, command=self._use_place_suggestion)
         self.place_suggest_btn.grid(row=3, column=2, sticky="e", padx=(6, 0), pady=(8, 0))
 
@@ -379,7 +450,6 @@ class App(tk.Tk):
         self.assignment_of = {g.key: None for g in groups}
         self.places = {}
         self.poi_requested = set()
-        self.poi_failed = set()
         self.current = None
         self.scope_var.set(SCOPE_ALL)
         self._fill_tree()
@@ -413,18 +483,25 @@ class App(tk.Tk):
             loc = "rozpoznawanie…"
         else:
             p = self.places[g.key]
-            if not p.town:
-                loc = "nie rozpoznano" + (" (offline)" if p.error else "")
-            else:
-                loc = p.town
-                if p.object_name:
-                    loc += f" / {p.object_name}"
-                elif g.key in self.poi_failed:
-                    loc += " / obiekt: nie sprawdzono (offline)"
+            if p.town:
+                loc = p.town + (" (wybrano)" if p.town_decided else "")
+                if p.object_choice:
+                    loc += f" / {p.object_name} ✓"
+                elif p.object_choice == "" and p.objects:
+                    loc += " / bez obiektu"
+                elif p.objects:
+                    prop = p.proposed_object
+                    loc += f" / {prop.name}? ({prop.distance_m:.0f} m, do zatwierdzenia)"
+                elif p.object_failed:
+                    loc += " / obiekty: nie sprawdzono"
                 elif g.key in self.poi_requested and not p.object_checked:
-                    loc += " / szukanie obiektu…"
-                if p.source.startswith("cache"):
-                    loc += " [cache]"
+                    loc += " / szukanie obiektów…"
+            elif p.ambiguous:
+                loc = "do wyboru: " + " / ".join(p.town_candidates[:4])
+            else:
+                loc = "nie rozpoznano" + (" (brak połączenia)" if p.error else "")
+            if p.town_source.startswith("cache"):
+                loc += " [cache]"
         a = self.assignment_of.get(g.key)
         if a is None:
             cat = "— brak —"
@@ -485,7 +562,13 @@ class App(tk.Tk):
             current = self.current
             members = {g.key for g in self._members(current)} if current else set()
             if current is not None and members == set(keys):
-                current.category = cat          # zmiana kategorii całego przypisania
+                # Zmiana kategorii całego przypisania. Pola Eventów i Zleceń mają to samo
+                # znaczenie (nazwa, data, miejsce) – zostają; w Hobby znaczą co innego
+                # (ręczna miejscowość/obiekt), więc przy przejściu z/do Hobby są czyszczone.
+                if pl.CATEGORY_HOBBY in (current.category, cat):
+                    current.name = current.date = current.place = ""
+                    current.edited = set()
+                current.category = cat
             else:
                 # Nowe przypisanie zaczyna z pustym formularzem – pola innej kategorii
                 # (np. nazwa wydarzenia) nie mogą trafić do nowej kategorii.
@@ -566,6 +649,7 @@ class App(tk.Tk):
             self.form_box.configure(text="Hobby / Luźne loty")
             self.hobby_form.grid(row=0, column=0, sticky="ew")
             self._update_hobby_summary()
+            self._refresh_decisions()
             return
 
         is_event = a.category == pl.CATEGORY_EVENT
@@ -604,6 +688,7 @@ class App(tk.Tk):
         members = self._members(a)
         d = pl.suggest_date(members)
         t = pl.suggest_town(members, self.places)
+        self.place_combo.configure(values=pl.town_options(members, self.places))
         self.date_suggest_btn.configure(text=f"Z materiałów: {d}" if d else "Brak daty w materiałach",
                                         state=tk.NORMAL if d else tk.DISABLED)
         self.place_suggest_btn.configure(text=f"Z GPS: {t}" if t else "Brak propozycji z GPS",
@@ -659,23 +744,23 @@ class App(tk.Tk):
                 self.worker.submit(self.import_id, "poi", g.key, g.gps)
         self._update_geo_status()
 
-    def _on_town(self, key: str, town: str | None, source: str, error: str) -> None:
-        self.places[key] = Place(town=town, source=source, error=error)
+    def _on_town(self, key: str, result: TownResult, source: str, error: str) -> None:
+        self.places[key] = Place(town=result.town, town_candidates=list(result.candidates),
+                                 town_reason=result.reason, town_source=source,
+                                 town_decided=source == SOURCE_DECISION, error=error)
         self._request_objects()
         self._after_geo_update(key)
 
-    def _on_poi(self, key: str, poi: dict | None, source: str, error: str) -> None:
+    def _on_poi(self, key: str, cands: list, source: str, error: str, remembered: str | None) -> None:
         place = self.places.get(key)
         if place is None:
             return
+        place.objects = list(cands)
         place.object_checked = True
-        if source == SOURCE_NONE and error:
-            self.poi_failed.add(key)
-        else:
-            self.poi_failed.discard(key)
-        if poi:
-            place.object_name = poi.get("name")
-            place.object_distance_m = poi.get("distance")
+        place.object_failed = source == SOURCE_NONE and bool(error)
+        if remembered is not None and (remembered == "" or any(c.osm_id == remembered for c in cands)):
+            place.object_choice = remembered
+            place.object_choice_source = SOURCE_DECISION
         if error and not place.error:
             place.error = error
         self._after_geo_update(key)
@@ -696,6 +781,7 @@ class App(tk.Tk):
                 self._suspend = False
             if a.category == pl.CATEGORY_HOBBY:
                 self._update_hobby_summary()
+                self._refresh_decisions()
             else:
                 self._update_suggestion_buttons()
         elif a is not None:
@@ -711,11 +797,15 @@ class App(tk.Tk):
         pending = sum(1 for g in with_gps if g.key not in self.places)
         pending_poi = sum(1 for k in self.poi_requested
                           if k in self.places and not self.places[k].object_checked)
-        unresolved = sum(1 for g in with_gps if g.key in self.places and not self.places[g.key].town)
+        unresolved = sum(1 for g in with_gps if g.key in self.places
+                         and not self.places[g.key].town and not self.places[g.key].ambiguous)
+        ambiguous = sum(1 for g in with_gps if g.key in self.places and self.places[g.key].ambiguous)
         no_gps = len(self.groups) - len(with_gps)
         parts = [f"GPS: {len(with_gps)} z {_groups_word(len(self.groups))}"]
         if pending or pending_poi:
             parts.append(f"rozpoznawanie: {pending} miejscowości, {pending_poi} obiektów…")
+        if ambiguous:
+            parts.append(f"niejednoznaczna miejscowość: {ambiguous}")
         if unresolved:
             parts.append(f"nie rozpoznano: {unresolved}")
         if no_gps:
@@ -723,7 +813,7 @@ class App(tk.Tk):
         if self.settings.get("offline"):
             parts.append("tryb offline – używane są tylko zapisane wyniki")
         elif self.geo.network_down:
-            parts.append("brak internetu – używane są zapisane wyniki; możesz uzupełnić lokalizację ręcznie")
+            parts.append("brak połączenia z Overpass – używane są zapisane dane; możesz uzupełnić lokalizację ręcznie")
         self.geo_status_var.set(" · ".join(parts))
 
     def _update_hobby_summary(self) -> None:
@@ -734,7 +824,9 @@ class App(tk.Tk):
         ok = sum(1 for g in members if (self.places.get(g.key) or Place()).town)
         pending = sum(1 for g in members if pl.is_pending(g, self.places, need_object=True))
         missing = len(members) - ok - pending
-        unchecked = sum(1 for g in members if g.key in self.poi_failed)
+        unchecked = sum(1 for g in members if (self.places.get(g.key) or Place()).object_failed)
+        to_decide = sum(1 for g in members if (p := self.places.get(g.key)) is not None
+                        and (p.ambiguous or p.needs_object_decision))
         text = f"Rozpoznano lokalizację: {ok} z {_groups_word(len(members))}."
         if pending:
             text += f" Trwa rozpoznawanie: {pending}."
@@ -743,22 +835,141 @@ class App(tk.Tk):
         if unchecked:
             text += (f" Liczba grup bez sprawdzonych obiektów: {unchecked} – wpisz obiekt ręcznie, "
                      "kliknij „Ponów rozpoznawanie” albo pozostaw bez poziomu obiektu.")
-        warn = (missing and not a.place.strip()) or unchecked
+        if to_decide:
+            text += f" Czeka na Twoją decyzję: {_groups_word(to_decide)} (lista poniżej)."
+        warn = (missing and not a.place.strip()) or unchecked or to_decide
         self.hobby_summary.configure(text=text, style="Error.TLabel" if warn else "Hint.TLabel")
 
     def _retry_geo(self) -> None:
         self.geo.reset_network_state()
         for g in self.groups:
             p = self.places.get(g.key)
-            if g.gps and p is not None and not p.town:
+            if g.gps and p is not None and not p.town and not p.ambiguous:
                 del self.places[g.key]
                 self.worker.submit(self.import_id, "town", g.key, g.gps)
-            elif g.key in self.poi_failed and p is not None:
+            elif p is not None and p.object_failed:
                 p.object_checked = False
-                self.poi_failed.discard(g.key)
+                p.object_failed = False
                 self.poi_requested.discard(g.key)
         self._request_objects()
         self._update_rows()
+        self._schedule_refresh()
+
+    # ══ Decyzje: miejscowość niejednoznaczna, obiekt do zatwierdzenia ══
+
+    def _refresh_decisions(self) -> None:
+        a = self.current
+        selected = self.decision_tree.selection()
+        selected_key = selected[0] if selected else None
+        self.decision_tree.delete(*self.decision_tree.get_children())
+        self._decision_rows = {}
+        if a is None or a.category != pl.CATEGORY_HOBBY:
+            return
+        towns: dict[tuple, list[str]] = {}
+        objects: dict[str, list[str]] = {}
+        for g in self._members(a):
+            p = self.places.get(g.key)
+            if p is None:
+                continue
+            if p.town_candidates and (p.ambiguous or p.town_decided):
+                towns.setdefault(tuple(sorted(p.town_candidates)), []).append(g.key)
+            if p.town and p.objects:
+                objects.setdefault(p.objects[0].osm_id, []).append(g.key)
+        for cands, keys in towns.items():
+            chosen = {self.places[k].town for k in keys if self.places[k].town}
+            todo = any(self.places[k].ambiguous for k in keys)
+            status = "wybierz miejscowość" if todo else f"wybrano: {', '.join(sorted(chosen))}"
+            iid = "town|" + "|".join(cands)
+            self._decision_rows[iid] = ("town", keys)
+            self.decision_tree.insert("", tk.END, iid=iid, tags=("todo",) if todo else (),
+                                      values=("Miejscowość", " / ".join(cands), len(keys), status))
+        for oid, keys in objects.items():
+            p0 = self.places[keys[0]]
+            prop = p0.objects[0]
+            dist = min(next(o.distance_m for o in self.places[k].objects if o.osm_id == oid) for k in keys)
+            choices = {self.places[k].object_choice for k in keys}
+            if None in choices:
+                status = "do zatwierdzenia" if choices == {None} else "częściowo zatwierdzone"
+                todo = True
+            else:
+                names = sorted({self.places[k].object_name or NO_OBJECT for k in keys})
+                status = "zatwierdzono: " + ", ".join(names)
+                todo = False
+            iid = "obj|" + oid
+            self._decision_rows[iid] = ("obj", keys)
+            self.decision_tree.insert("", tk.END, iid=iid, tags=("todo",) if todo else (),
+                                      values=("Obiekt", f"{prop.name} ({prop.category}, {dist:.0f} m)",
+                                              len(keys), status))
+        rows = self.decision_tree.get_children()
+        target = selected_key if selected_key in rows else next(
+            (r for r in rows if "todo" in self.decision_tree.item(r, "tags")), rows[0] if rows else None)
+        if target:
+            self.decision_tree.selection_set(target)
+        else:
+            self.choice_combo.configure(values=[])
+            self.choice_var.set("")
+
+    def _on_decision_selected(self, _event=None) -> None:
+        sel = self.decision_tree.selection()
+        if not sel or sel[0] not in self._decision_rows:
+            return
+        kind, keys = self._decision_rows[sel[0]]
+        if kind == "town":
+            p = self.places[keys[0]]
+            self._choice_values = list(p.town_candidates)
+            self._choice_ids = list(p.town_candidates)
+            current = p.town if p.town in p.town_candidates else p.town_candidates[0]
+        else:
+            best: dict[str, object] = {}
+            for k in keys:
+                for o in self.places[k].objects:
+                    if o.osm_id not in best or o.distance_m < best[o.osm_id].distance_m:
+                        best[o.osm_id] = o
+            ordered = sorted(best.values(), key=lambda o: (o.priority, o.distance_m))
+            self._choice_values = [f"{o.name} ({o.category}, {o.distance_m:.0f} m)" for o in ordered] + [NO_OBJECT]
+            self._choice_ids = [o.osm_id for o in ordered] + [""]
+            choice = self.places[keys[0]].object_choice
+            current_id = choice if choice is not None else ordered[0].osm_id
+            current = self._choice_values[self._choice_ids.index(current_id)] if current_id in self._choice_ids \
+                else self._choice_values[0]
+        self.choice_combo.configure(values=self._choice_values)
+        self.choice_var.set(current)
+
+    def _apply_decision(self, no_object: bool = False) -> None:
+        sel = self.decision_tree.selection()
+        if not sel or sel[0] not in self._decision_rows:
+            messagebox.showinfo(APP_NAME, "Wybierz pozycję z listy „Do zatwierdzenia”.")
+            return
+        kind, keys = self._decision_rows[sel[0]]
+        label = self.choice_var.get()
+        if not no_object and label not in self._choice_values:
+            messagebox.showinfo(APP_NAME, "Wybierz pozycję z listy wyboru.")
+            return
+        if kind == "town":
+            if no_object or label not in self._choice_values:
+                return
+            choice = self._choice_ids[self._choice_values.index(label)]
+            for k in keys:
+                p, g = self.places[k], self.group_by_key[k]
+                p.town, p.town_decided, p.town_source = choice, True, SOURCE_DECISION
+                self.decisions.remember_town(g.gps[0], g.gps[1], p.town_candidates, choice)
+            self._request_objects()
+        else:
+            choice = "" if no_object or label == NO_OBJECT else self._choice_ids[self._choice_values.index(label)]
+            skipped = 0
+            for k in keys:
+                p, g = self.places[k], self.group_by_key[k]
+                if choice and all(o.osm_id != choice for o in p.objects):
+                    skipped += 1   # obiekt poza promieniem tego materiału
+                    continue
+                p.object_choice, p.object_choice_source = choice, "użytkownik"
+                self.decisions.remember_object(g.gps[0], g.gps[1], [o.osm_id for o in p.objects], choice)
+            if skipped:
+                messagebox.showinfo(APP_NAME, f"Wybrany obiekt jest poza promieniem dla {_groups_word(skipped)} – "
+                                              "te grupy nadal czekają na decyzję.")
+        self._update_rows(keys)
+        self._update_hobby_summary()
+        self._refresh_decisions()
         self._schedule_refresh()
 
     # ══ Podgląd na żywo ════════════════════════════════════════
@@ -902,7 +1113,8 @@ class App(tk.Tk):
             self.geo.reset_network_state()
             self._update_geo_status()
 
-        SettingsDialog(self, self.settings, len(self.cache), saved, self.cache.clear)
+        SettingsDialog(self, self.settings, self.cache.summary(), len(self.decisions), saved,
+                       self.cache.clear, self.decisions.clear)
 
     # ══ Pętla zdarzeń ══════════════════════════════════════════
 
@@ -931,7 +1143,9 @@ class App(tk.Tk):
                 elif kind == "town" and ev[1] == self.import_id and ev[2] in self.group_by_key:
                     self._on_town(ev[2], ev[3], ev[4], ev[5])
                 elif kind == "poi" and ev[1] == self.import_id and ev[2] in self.group_by_key:
-                    self._on_poi(ev[2], ev[3], ev[4], ev[5])
+                    self._on_poi(ev[2], ev[3], ev[4], ev[5], ev[6])
+                elif kind == "net_status":
+                    self.net_status_var.set(ev[1])
                 elif kind == "move_progress":
                     self.progress.configure(maximum=max(ev[2], 1), value=ev[1])
                 elif kind == "moved":

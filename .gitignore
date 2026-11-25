@@ -58,5 +58,7 @@ desktop.ini
 
 # Lokalne dane aplikacji (gdyby trafiły do folderu projektu)
 ustawienia.json
-cache_lokalizacji.json
+
+cache_osm.json
+decyzje_lokalizacji.json
 *.tmp

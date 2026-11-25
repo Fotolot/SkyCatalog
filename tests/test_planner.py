@@ -5,6 +5,16 @@ from pathlib import Path
 
 from sortowanie import planner as pl
 from sortowanie.geo import Place
+from sortowanie.osm import PoiCandidate
+
+
+def place(town, obj=None, decision="accept", checked=True):
+    """Place z rozpoznaną miejscowością; obiekt domyślnie zatwierdzony przez użytkownika."""
+    p = Place(town=town, object_checked=checked)
+    if obj:
+        p.objects = [PoiCandidate(f"w{abs(hash(obj)) % 1000}", obj, "zabytek", 0, 40.0)]
+        p.object_choice = {"accept": p.objects[0].osm_id, "reject": "", "pending": None}[decision]
+    return p
 from sortowanie.media import KIND_PHOTO, KIND_VIDEO, MediaGroup
 
 
@@ -26,23 +36,23 @@ class PlannerTests(unittest.TestCase):
     def test_hobby_with_object(self):
         g = group("DJI_0001")
         a = pl.Assignment(pl.CATEGORY_HOBBY)
-        place = Place("Rzeszów", "Pomnik Czynu Rewolucyjnego", object_checked=True)
-        self.assertEqual(pl.relative_dir(g, a, place),
+        p = place("Rzeszów", "Pomnik Czynu Rewolucyjnego")
+        self.assertEqual(pl.relative_dir(g, a, p),
                          Path("Hobby", "Rzeszów", "Pomnik Czynu Rewolucyjnego", "WIDEO"))
         photo = group("DJI_0002", KIND_PHOTO)
-        self.assertEqual(pl.relative_dir(photo, a, place),
+        self.assertEqual(pl.relative_dir(photo, a, p),
                          Path("Hobby", "Rzeszów", "Pomnik Czynu Rewolucyjnego", "Zdjęcia"))
 
     def test_hobby_without_object_skips_level(self):
         a = pl.Assignment(pl.CATEGORY_HOBBY)
-        self.assertEqual(pl.relative_dir(group("A"), a, Place("Rzeszów", None)),
+        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")),
                          Path("Hobby", "Rzeszów", "WIDEO"))
 
     def test_hobby_groups_split_by_gps(self):
         a = pl.Assignment(pl.CATEGORY_HOBBY)
         g1, g2 = group("A"), group("B")
-        places = {"A": Place("Rzeszów", "Zamek", object_checked=True),
-                  "B": Place("Łańcut", None, object_checked=True)}
+        places = {"A": place("Rzeszów", "Zamek"),
+                  "B": place("Łańcut")}
         plan = pl.build_plan([g1, g2], {"A": a, "B": a}, places, self.arch)
         self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/Zamek/WIDEO"))
         self.assertEqual(plan.group_dirs["B"], Path("Hobby/Łańcut/WIDEO"))
@@ -67,24 +77,48 @@ class PlannerTests(unittest.TestCase):
     def test_hobby_waits_for_object_lookup(self):
         g = group("A")
         a = pl.Assignment(pl.CATEGORY_HOBBY)
-        plan = pl.build_plan([g], {"A": a}, {"A": Place("Rzeszów")}, self.arch)
+        plan = pl.build_plan([g], {"A": a}, {"A": place("Rzeszów", checked=False)}, self.arch)
         self.assertTrue(any("trwa rozpoznawanie" in e for e in plan.errors))
-        plan = pl.build_plan([g], {"A": a}, {"A": Place("Rzeszów", object_checked=True)}, self.arch)
+        plan = pl.build_plan([g], {"A": a}, {"A": place("Rzeszów")}, self.arch)
         self.assertTrue(plan.ready, plan.errors)
 
     def test_hobby_manual_object_only_when_not_recognized(self):
         a = pl.Assignment(pl.CATEGORY_HOBBY, name="Zalew")
-        self.assertEqual(pl.relative_dir(group("A"), a, Place("Rzeszów", object_checked=True)),
+        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")),
                          Path("Hobby/Rzeszów/Zalew/WIDEO"))
-        self.assertEqual(pl.relative_dir(group("A"), a, Place("Rzeszów", "Zamek", object_checked=True)),
+        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów", "Zamek")),
                          Path("Hobby/Rzeszów/Zamek/WIDEO"))
         a.place = "Tyczyn"
         self.assertEqual(pl.relative_dir(group("B", gps=None), a, None), Path("Hobby/Tyczyn/Zalew/WIDEO"))
 
+    def test_hobby_object_requires_approval(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY)
+        p = place("Rzeszów", "Zamek", decision="pending")
+        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
+        self.assertFalse(plan.ready)
+        self.assertTrue(any("zatwierdź albo odrzuć" in e for e in plan.errors))
+        p.object_choice = ""   # odrzucony – bez poziomu obiektu
+        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
+        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/WIDEO"))
+
+    def test_hobby_ambiguous_town_requires_choice(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, place="Ręczna")
+        p = Place(town=None, town_candidates=["Wieś G", "Przysiółek H"], object_checked=True)
+        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
+        self.assertTrue(any("wybierz miejscowość" in e for e in plan.errors))
+        self.assertNotIn("A", plan.group_dirs)   # ręczna miejscowość nie zastępuje wyboru
+        p.town, p.town_decided = "Wieś G", True
+        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
+        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Wieś G/WIDEO"))
+
+    def test_town_options_for_events(self):
+        places = {"A": place("Miasto A"), "B": Place(town_candidates=["Wieś G", "Miasto A"])}
+        self.assertEqual(pl.town_options([group("A"), group("B")], places), ["Miasto A", "Wieś G"])
+
     # Eventy
     def test_event_structure_ignores_gps_objects(self):
         a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg Niepodległości", date="2026-11-11", place="Rzeszów")
-        places = {"A": Place("Rzeszów", "Pomnik"), "B": Place("Boguchwała", "Kościół")}
+        places = {"A": place("Rzeszów", "Pomnik"), "B": place("Boguchwała", "Kościół")}
         plan = pl.build_plan([group("A"), group("B", KIND_PHOTO)], {"A": a, "B": a}, places, self.arch)
         self.assertTrue(plan.ready, plan.errors)
         self.assertEqual(plan.group_dirs["A"], Path("Eventy/Rzeszów/2026-11-11 Bieg Niepodległości/WIDEO"))
@@ -105,7 +139,7 @@ class PlannerTests(unittest.TestCase):
     def test_order_structure(self):
         a = pl.Assignment(pl.CATEGORY_ORDER, name="Film promocyjny nieruchomości",
                           date="2026-11-25", place="Łańcut")
-        places = {"A": Place("Rzeszów"), "B": Place("Krosno")}
+        places = {"A": place("Rzeszów"), "B": place("Krosno")}
         plan = pl.build_plan([group("A"), group("B")], {"A": a, "B": a}, places, self.arch)
         dirs = set(plan.group_dirs.values())
         self.assertEqual(dirs, {Path("Zlecenia/Łańcut/2026-11-25 Film promocyjny nieruchomości/WIDEO")})
@@ -150,7 +184,7 @@ class PlannerTests(unittest.TestCase):
         g3 = group("C", captured=None)
         self.assertEqual(pl.suggest_date([g1, g2, g3]), "2026-11-10")
         self.assertEqual(pl.suggest_date([g3]), "")
-        places = {"A": Place("Rzeszów"), "B": Place("Rzeszów"), "C": Place("Tyczyn")}
+        places = {"A": place("Rzeszów"), "B": place("Rzeszów"), "C": place("Tyczyn")}
         self.assertEqual(pl.suggest_town([g1, g2, g3], places), "Rzeszów")
 
     def test_list_existing(self):

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import calendar
+import os
 import tkinter as tk
+import webbrowser
 from datetime import date
 from tkinter import messagebox, ttk
 from typing import Callable
 
-from .config import PROVIDERS_POI, PROVIDERS_REVERSE, Settings
+from .config import Settings
+from .osm import ATTRIBUTION, ATTRIBUTION_URL
+from .overpass import ENV_ENDPOINT
 from .planner import parse_date
 
 MONTHS = ["styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec", "lipiec",
@@ -106,26 +110,23 @@ class DateField(ttk.Frame):
 
 
 class SettingsDialog(tk.Toplevel):
-    """Konfiguracja dostawców usług lokalizacyjnych, promienia i trybu offline."""
+    """Konfiguracja Overpass API, promienia, cache i trybu offline."""
 
-    def __init__(self, master: tk.Misc, settings: Settings, cache_size: int,
-                 on_save: Callable[[], None], on_clear_cache: Callable[[], None]) -> None:
+    def __init__(self, master: tk.Misc, settings: Settings, cache_summary: str, decisions_count: int,
+                 on_save: Callable[[], None], on_clear_cache: Callable[[], None],
+                 on_clear_decisions: Callable[[], None]) -> None:
         super().__init__(master)
         self.title("Ustawienia")
         self.resizable(False, False)
         self.transient(master.winfo_toplevel())
         self.settings = settings
         self.on_save = on_save
-        self.on_clear_cache = on_clear_cache
 
         s = settings.as_dict()
         self.vars = {
-            "reverse_provider": tk.StringVar(value=s["reverse_provider"]),
-            "nominatim_url": tk.StringVar(value=s["nominatim_url"]),
-            "photon_url": tk.StringVar(value=s["photon_url"]),
-            "poi_provider": tk.StringVar(value=s["poi_provider"]),
             "overpass_url": tk.StringVar(value=s["overpass_url"]),
             "poi_radius_m": tk.StringVar(value=str(s["poi_radius_m"])),
+            "cache_days": tk.StringVar(value=str(s["cache_days"])),
             "contact_email": tk.StringVar(value=s["contact_email"]),
             "offline": tk.BooleanVar(value=bool(s["offline"])),
         }
@@ -134,36 +135,47 @@ class SettingsDialog(tk.Toplevel):
         body.pack(fill=tk.BOTH, expand=True)
         body.columnconfigure(1, weight=1)
         rows = [
-            ("Rozpoznawanie miejscowości:", ttk.Combobox(body, textvariable=self.vars["reverse_provider"],
-                                                          values=PROVIDERS_REVERSE, state="readonly", width=18)),
-            ("Adres Nominatim:", ttk.Entry(body, textvariable=self.vars["nominatim_url"], width=48)),
-            ("Adres Photon:", ttk.Entry(body, textvariable=self.vars["photon_url"], width=48)),
-            ("Wyszukiwanie obiektów:", ttk.Combobox(body, textvariable=self.vars["poi_provider"],
-                                                     values=PROVIDERS_POI, state="readonly", width=18)),
-            ("Adres Overpass API:", ttk.Entry(body, textvariable=self.vars["overpass_url"], width=48)),
+            ("Endpoint Overpass API:", ttk.Entry(body, textvariable=self.vars["overpass_url"], width=56)),
             ("Promień wyszukiwania obiektów (m):", ttk.Spinbox(body, from_=25, to=2000, increment=25,
                                                                 textvariable=self.vars["poi_radius_m"], width=8)),
-            ("E-mail kontaktowy (opcjonalnie):", ttk.Entry(body, textvariable=self.vars["contact_email"], width=48)),
+            ("Odświeżaj dane OSM po (dniach):", ttk.Spinbox(body, from_=1, to=3650, increment=30,
+                                                             textvariable=self.vars["cache_days"], width=8)),
+            ("Kontakt w User-Agent (opcjonalnie):", ttk.Entry(body, textvariable=self.vars["contact_email"], width=56)),
         ]
         for r, (label, widget) in enumerate(rows):
             ttk.Label(body, text=label).grid(row=r, column=0, sticky="w", pady=3, padx=(0, 8))
-            widget.grid(row=r, column=1, sticky="w" if isinstance(widget, (ttk.Combobox, ttk.Spinbox)) else "ew", pady=3)
+            widget.grid(row=r, column=1, sticky="w" if isinstance(widget, ttk.Spinbox) else "ew", pady=3)
         r = len(rows)
-        ttk.Checkbutton(body, text="Tryb offline – używaj tylko zapisanych wyników (bez internetu)",
-                        variable=self.vars["offline"]).grid(row=r, column=0, columnspan=2, sticky="w", pady=(8, 3))
-        ttk.Label(body, foreground="#555", wraplength=520, justify="left", text=(
-            "Do usług wysyłane są wyłącznie współrzędne GPS – nigdy zdjęcia ani filmy. "
-            "Domyślne usługi OpenStreetMap są bezpłatne, ale mają limity (Nominatim: maks. 1 zapytanie "
-            "na sekundę). Wyniki są zapisywane lokalnie, więc kolejne importy z tych samych miejsc "
-            "działają bez internetu. E-mail kontaktowy jest dołączany do nagłówka zapytań tylko, "
-            "jeśli go wpiszesz (zalecane przez zasady Nominatim przy częstym użyciu).")
-        ).grid(row=r + 1, column=0, columnspan=2, sticky="w", pady=(4, 8))
+        env = os.environ.get(ENV_ENDPOINT, "").strip()
+        if env:
+            ttk.Label(body, foreground="#b00020", text=f"Zmienna {ENV_ENDPOINT} ma pierwszeństwo: {env}"
+                      ).grid(row=r, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(body, text="Tryb offline – tylko zapisane dane i decyzje (bez internetu)",
+                        variable=self.vars["offline"]).grid(row=r + 1, column=0, columnspan=2, sticky="w", pady=(8, 3))
+        ttk.Label(body, foreground="#555", wraplength=560, justify="left", text=(
+            "Do serwera wysyłane są wyłącznie współrzędne – nigdy zdjęcia ani filmy. Publiczna instancja "
+            "overpass-api.de jest bezpłatna, ale współdzielona (orientacyjnie do 10 000 zapytań i 1 GB dziennie). "
+            "Aplikacja wysyła zapytania pojedynczo, zapisuje dane lokalnie i ponawia je po przerwie przy "
+            f"błędach 429/504. Przy intensywnym użyciu wskaż własny serwer Overpass – w polu powyżej "
+            f"lub zmienną środowiskową {ENV_ENDPOINT}.")
+        ).grid(row=r + 2, column=0, columnspan=2, sticky="w", pady=(4, 8))
 
         cache_row = ttk.Frame(body)
-        cache_row.grid(row=r + 2, column=0, columnspan=2, sticky="ew")
-        self.cache_label = ttk.Label(cache_row, text=f"Zapisanych wyników w cache: {cache_size}")
+        cache_row.grid(row=r + 3, column=0, columnspan=2, sticky="ew")
+        self.cache_label = ttk.Label(cache_row, text=f"Cache danych OSM – {cache_summary}")
         self.cache_label.pack(side=tk.LEFT)
-        ttk.Button(cache_row, text="Wyczyść cache", command=self._clear_cache).pack(side=tk.RIGHT)
+        ttk.Button(cache_row, text="Wyczyść", command=lambda: self._confirm(
+            "Usunąć zapisane dane OSM?", on_clear_cache, self.cache_label, "Cache danych OSM – pusty")).pack(side=tk.RIGHT)
+        dec_row = ttk.Frame(body)
+        dec_row.grid(row=r + 4, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self.dec_label = ttk.Label(dec_row, text=f"Zapamiętane decyzje (miejscowości i obiekty): {decisions_count}")
+        self.dec_label.pack(side=tk.LEFT)
+        ttk.Button(dec_row, text="Wyczyść", command=lambda: self._confirm(
+            "Usunąć zapamiętane decyzje?", on_clear_decisions, self.dec_label,
+            "Zapamiętane decyzje (miejscowości i obiekty): 0")).pack(side=tk.RIGHT)
+        attribution = ttk.Label(body, text=f"Dane: {ATTRIBUTION}", foreground="#0b57d0", cursor="hand2")
+        attribution.grid(row=r + 5, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        attribution.bind("<Button-1>", lambda _e: webbrowser.open(ATTRIBUTION_URL))
 
         buttons = ttk.Frame(self, padding=(12, 0, 12, 12))
         buttons.pack(fill=tk.X)
@@ -175,27 +187,27 @@ class SettingsDialog(tk.Toplevel):
     def _grab(self) -> None:
         _safe_grab(self)
 
-    def _clear_cache(self) -> None:
-        if messagebox.askyesno("Ustawienia", "Usunąć wszystkie zapisane wyniki lokalizacji?", parent=self):
-            self.on_clear_cache()
-            self.cache_label.configure(text="Zapisanych wyników w cache: 0")
+    def _confirm(self, question: str, action: Callable[[], None], label: ttk.Label, text: str) -> None:
+        if messagebox.askyesno("Ustawienia", question, parent=self):
+            action()
+            label.configure(text=text)
 
     def _save(self) -> None:
         try:
             radius = int(self.vars["poi_radius_m"].get())
-            if not 10 <= radius <= 5000:
+            days = int(self.vars["cache_days"].get())
+            if not 10 <= radius <= 5000 or days < 1:
                 raise ValueError
         except ValueError:
-            messagebox.showerror("Ustawienia", "Promień musi być liczbą od 10 do 5000 m.", parent=self)
+            messagebox.showerror("Ustawienia", "Promień: 10–5000 m, odświeżanie: co najmniej 1 dzień.", parent=self)
             return
-        values = {k: v.get() for k, v in self.vars.items()}
-        values["poi_radius_m"] = radius
-        for key in ("nominatim_url", "photon_url", "overpass_url"):
-            if not str(values[key]).startswith(("https://", "http://")):
-                messagebox.showerror("Ustawienia", f"Nieprawidłowy adres usługi: {values[key]}", parent=self)
-                return
-        values["contact_email"] = str(values["contact_email"]).strip()
-        self.settings.update(values)
+        url = self.vars["overpass_url"].get().strip()
+        if not url.startswith(("https://", "http://")):
+            messagebox.showerror("Ustawienia", f"Nieprawidłowy adres endpointu: {url}", parent=self)
+            return
+        self.settings.update({"overpass_url": url, "poi_radius_m": radius, "cache_days": days,
+                              "contact_email": self.vars["contact_email"].get().strip(),
+                              "offline": bool(self.vars["offline"].get())})
         self.settings.save()
         self.on_save()
         self.destroy()
