@@ -45,6 +45,8 @@ class Place:
     object_distance_m: float | None = None
     source: str = SOURCE_NONE
     error: str = ""
+    # Czy wyszukiwanie obiektu w promieniu zostało już wykonane (lub pominięte)
+    object_checked: bool = False
 
     @property
     def label(self) -> str:
@@ -84,8 +86,9 @@ class GeoCache:
             pass
 
     @staticmethod
-    def key(kind: str, provider: str, lat: float, lon: float, extra: str = "") -> str:
-        return f"{kind}|{provider}|{extra}|{lat:.4f},{lon:.4f}"
+    def key(kind: str, provider: str, lat: float, lon: float, extra: str = "",
+            precision: int = 4) -> str:
+        return f"{kind}|{provider}|{extra}|{lat:.{precision}f},{lon:.{precision}f}"
 
     def get(self, key: str, max_age_days: float | None = None) -> dict | None:
         with self._lock:
@@ -299,7 +302,8 @@ class LocationService:
         provider = self.settings.get("reverse_provider")
         if provider not in ("nominatim", "photon"):
             return None, SOURCE_NONE, ""
-        key = GeoCache.key("rev", provider, lat, lon)
+        # Miejscowość: wystarczy dokładność ~100 m (mniej zapytań do usługi)
+        key = GeoCache.key("rev", provider, lat, lon, precision=3)
         cached = self.cache.get(key, self.settings.get("cache_days"))
         if cached is not None:
             return cached.get("town"), SOURCE_CACHE, ""
@@ -367,6 +371,7 @@ class LocationService:
         place = Place(town=town, source=src, error=err)
         if with_object and town:
             poi, _psrc, perr = self.nearby_object(lat, lon)
+            place.object_checked = True
             if poi:
                 place.object_name = poi["name"]
                 place.object_distance_m = poi.get("distance")

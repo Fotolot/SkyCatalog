@@ -45,7 +45,8 @@ class Assignment:
     category: str
     name: str = ""       # nazwa wydarzenia / zlecenia
     date: str = ""       # RRRR-MM-DD
-    place: str = ""      # Eventy: miejscowość; Zlecenia: lokalizacja; Hobby: miejscowość zastępcza
+    place: str = ""      # Eventy: miejscowość; Zlecenia: lokalizacja; Hobby: miejscowość ręcznie
+    # Hobby: ``name`` = obiekt wpisany ręcznie (gdy nie rozpoznano go z GPS)
     # Czy użytkownik sam edytował pole (wtedy nie nadpisujemy go propozycjami)
     edited: set = field(default_factory=set)
     id: int = field(default_factory=lambda: next(_ids))
@@ -99,9 +100,14 @@ def suggest_town(groups: list[MediaGroup], places: dict[str, Place]) -> str:
     return max(counter, key=counter.get) if counter else ""
 
 
-def is_pending(group: MediaGroup, places: dict[str, Place]) -> bool:
-    """Grupa ma GPS, ale rozpoznawanie lokalizacji jeszcze trwa."""
-    return group.gps is not None and group.key not in places
+def is_pending(group: MediaGroup, places: dict[str, Place], need_object: bool = False) -> bool:
+    """Grupa ma GPS, ale rozpoznawanie lokalizacji (i ew. obiektu) jeszcze trwa."""
+    if group.gps is None:
+        return False
+    place = places.get(group.key)
+    if place is None:
+        return True
+    return need_object and bool(place.town) and not place.object_checked
 
 
 # ── Foldery docelowe ───────────────────────────────────────────
@@ -115,11 +121,16 @@ def event_folder_name(assignment: Assignment) -> str | None:
 
 
 def hobby_location(group: MediaGroup, place: Place | None, assignment: Assignment) -> tuple[str | None, str | None]:
-    """(miejscowość, obiekt) dla Hobby. Ręczna miejscowość służy, gdy GPS nic nie dał."""
+    """(miejscowość, obiekt) dla Hobby.
+
+    Wartości z GPS mają pierwszeństwo. Ręcznie wpisana miejscowość (``assignment.place``)
+    i obiekt (``assignment.name``) są używane tylko wtedy, gdy GPS/internet ich nie dostarczył.
+    """
+    manual_obj = assignment.name.strip() or None
     if place and place.town:
-        return place.town, place.object_name
-    manual = assignment.place.strip()
-    return (manual or None), None
+        return place.town, place.object_name or manual_obj
+    manual_town = assignment.place.strip()
+    return (manual_town or None), (manual_obj if manual_town else None)
 
 
 def relative_dir(group: MediaGroup, assignment: Assignment | None, place: Place | None) -> Path | None:
@@ -152,13 +163,13 @@ def validate_assignment(assignment: Assignment, groups: list[MediaGroup],
     errors: list[str] = []
     label = CATEGORY_LABELS[assignment.category]
     if assignment.category == CATEGORY_HOBBY:
-        pending = [g for g in groups if is_pending(g, places)]
+        pending = [g for g in groups if is_pending(g, places, need_object=True)]
         if pending:
-            errors.append(f"{label}: trwa rozpoznawanie lokalizacji ({len(pending)} grup).")
-        missing = [g for g in groups if not is_pending(g, places)
+            errors.append(f"{label}: trwa rozpoznawanie lokalizacji (grupy: {len(pending)}).")
+        missing = [g for g in groups if not is_pending(g, places, need_object=True)
                    and not hobby_location(g, places.get(g.key), assignment)[0]]
         if missing:
-            errors.append(f"{label}: brak miejscowości dla {len(missing)} grup – "
+            errors.append(f"{label}: brak miejscowości (grupy: {len(missing)}) – "
                           "wpisz miejscowość ręcznie.")
         return errors
 
@@ -209,7 +220,7 @@ def build_plan(groups: list[MediaGroup], assignment_of: dict[str, Assignment | N
 
     unassigned = [g for g in groups if assignment_of.get(g.key) is None]
     if unassigned:
-        errors.append(f"Nie wybrano kategorii dla {len(unassigned)} z {len(groups)} grup materiałów.")
+        errors.append(f"Nie wybrano kategorii (grupy: {len(unassigned)} z {len(groups)}).")
 
     # Walidacja każdego przypisania osobno
     by_assignment: dict[int, tuple[Assignment, list[MediaGroup]]] = {}

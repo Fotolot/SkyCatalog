@@ -26,7 +26,7 @@ class PlannerTests(unittest.TestCase):
     def test_hobby_with_object(self):
         g = group("DJI_0001")
         a = pl.Assignment(pl.CATEGORY_HOBBY)
-        place = Place("Rzeszów", "Pomnik Czynu Rewolucyjnego")
+        place = Place("Rzeszów", "Pomnik Czynu Rewolucyjnego", object_checked=True)
         self.assertEqual(pl.relative_dir(g, a, place),
                          Path("Hobby", "Rzeszów", "Pomnik Czynu Rewolucyjnego", "WIDEO"))
         photo = group("DJI_0002", KIND_PHOTO)
@@ -41,7 +41,8 @@ class PlannerTests(unittest.TestCase):
     def test_hobby_groups_split_by_gps(self):
         a = pl.Assignment(pl.CATEGORY_HOBBY)
         g1, g2 = group("A"), group("B")
-        places = {"A": Place("Rzeszów", "Zamek"), "B": Place("Łańcut", None)}
+        places = {"A": Place("Rzeszów", "Zamek", object_checked=True),
+                  "B": Place("Łańcut", None, object_checked=True)}
         plan = pl.build_plan([g1, g2], {"A": a, "B": a}, places, self.arch)
         self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/Zamek/WIDEO"))
         self.assertEqual(plan.group_dirs["B"], Path("Hobby/Łańcut/WIDEO"))
@@ -62,6 +63,23 @@ class PlannerTests(unittest.TestCase):
         g = group("A")
         plan = pl.build_plan([g], {"A": pl.Assignment(pl.CATEGORY_HOBBY)}, {}, self.arch)
         self.assertTrue(any("trwa rozpoznawanie" in e for e in plan.errors))
+
+    def test_hobby_waits_for_object_lookup(self):
+        g = group("A")
+        a = pl.Assignment(pl.CATEGORY_HOBBY)
+        plan = pl.build_plan([g], {"A": a}, {"A": Place("Rzeszów")}, self.arch)
+        self.assertTrue(any("trwa rozpoznawanie" in e for e in plan.errors))
+        plan = pl.build_plan([g], {"A": a}, {"A": Place("Rzeszów", object_checked=True)}, self.arch)
+        self.assertTrue(plan.ready, plan.errors)
+
+    def test_hobby_manual_object_only_when_not_recognized(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name="Zalew")
+        self.assertEqual(pl.relative_dir(group("A"), a, Place("Rzeszów", object_checked=True)),
+                         Path("Hobby/Rzeszów/Zalew/WIDEO"))
+        self.assertEqual(pl.relative_dir(group("A"), a, Place("Rzeszów", "Zamek", object_checked=True)),
+                         Path("Hobby/Rzeszów/Zamek/WIDEO"))
+        a.place = "Tyczyn"
+        self.assertEqual(pl.relative_dir(group("B", gps=None), a, None), Path("Hobby/Tyczyn/Zalew/WIDEO"))
 
     # Eventy
     def test_event_structure_ignores_gps_objects(self):
