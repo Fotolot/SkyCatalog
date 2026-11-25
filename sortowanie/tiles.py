@@ -29,7 +29,7 @@ TILE_SIZE = 256
 MIN_ZOOM = 2
 FIX_THE_MAP_URL = "https://www.openstreetmap.org/fixthemap"
 OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
-USER_AGENT = f"SkyCatalog/{__version__} (aplikacja desktopowa Windows; +https://github.com/Fotolot/Sortowanie)"
+USER_AGENT = f"SkyCatalog/{__version__} (aplikacja desktopowa Windows; +https://github.com/Fotolot/SkyCatalog)"
 
 
 # ── Rzutowanie Web Mercator ────────────────────────────────────

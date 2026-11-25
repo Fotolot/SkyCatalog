@@ -2,8 +2,7 @@
 
 # SkyCatalog
 
-Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki
-(repozytorium nazywa się `Sortowanie`, program – **SkyCatalog**):
+Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki:
 
 * **Sortowanie** – wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię (Hobby, Eventy,
   Zlecenia), a aplikacja przenosi filmy i zdjęcia do uporządkowanej struktury folderów,
@@ -14,7 +13,7 @@ Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, ka
 
 ## Pobierz (wersja przenośna)
 
-1. Otwórz [**najnowsze wydanie**](https://github.com/Fotolot/Sortowanie/releases/latest)
+1. Otwórz [**najnowsze wydanie**](https://github.com/Fotolot/SkyCatalog/releases/latest)
    i pobierz **`SkyCatalog-portable.zip`**.
 2. Rozpakuj ZIP w dowolne miejsce z prawem zapisu (np. `Dokumenty` albo `D:\Programy`) – powstanie
    folder `SkyCatalog`. Uruchom `SkyCatalog\SkyCatalog.exe`. Nie trzeba instalatora ani Pythona;
@@ -30,7 +29,7 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
   (Szczegóły). Zmianę MAJOR.MINOR robi się, edytując plik `VERSION`.
 * **Wydania**: każdy push do `main` (lub ręczne uruchomienie workflow na `main`) buduje program,
   uruchamia testy i samotest, pakuje cały folder do `SkyCatalog-portable.zip` i tworzy tag
-  `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/Sortowanie/releases) z listą
+  `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/SkyCatalog/releases) z listą
   zmian. Push na inne gałęzie tylko buduje i testuje (plik do pobrania w zakładce Actions).
 * **Aktualizacja w programie**: kilka sekund po starcie program w tle sprawdza najnowsze wydanie.
   Brak internetu lub błąd serwera niczego nie blokuje. Gdy jest nowsza wersja, pojawia się okno
@@ -298,8 +297,8 @@ GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanyc
 ## Uruchomienie ze źródeł
 
 ```bat
-git clone https://github.com/Fotolot/Sortowanie.git
-cd Sortowanie
+git clone https://github.com/Fotolot/SkyCatalog.git
+cd SkyCatalog
 py -m pip install -r requirements.txt
 py main.py
 ```
