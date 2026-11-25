@@ -24,6 +24,7 @@ from ..geo import DecisionStore, LocationService, OsmCache, Place, SOURCE_DECISI
 from ..media import MediaGroup, scan_source
 from ..osm import ATTRIBUTION, ATTRIBUTION_URL, TownResult
 from .conflict_dialog import ConflictDialog
+from .hover_preview import TreeHoverPreview, preview_file
 from .common import (DateField, Poster, files_word, flow, groups_word, human_size, plain_label, scrollable, shrinkable,
                      splitter)
 
@@ -173,6 +174,7 @@ class SortTab(QWidget):
         for i, w in enumerate((130, 60, 95, 140, 230, 150)):
             self.tree.setColumnWidth(i, w)
         self.tree.itemSelectionChanged.connect(self._on_tree_select)
+        self.hover = TreeHoverPreview(self.tree, self._hover_info)
         b_all = QPushButton("Zaznacz wszystkie")
         b_all.clicked.connect(self.tree.selectAll)
         b_un = QPushButton("Zaznacz bez kategorii")
@@ -290,7 +292,16 @@ class SortTab(QWidget):
         f.addRow("", self.hobby_name_scope)
         self.hobby_town = QLineEdit()
         self.hobby_town.textChanged.connect(lambda t: self._on_field_changed("place", t))
-        f.addRow("Miejscowość ręcznie:", self.hobby_town)
+        # Podpowiedź (nie automat): miejscowość rozpoznana z GPS pozostałych materiałów
+        self.hobby_town_suggest = QPushButton()
+        self.hobby_town_suggest.setToolTip("Wpisuje tę miejscowość dla materiałów bez GPS – kliknij tylko, "
+                                           "jeśli zostały wykonane w tym samym miejscu.")
+        self.hobby_town_suggest.clicked.connect(self._use_hobby_town_suggestion)
+        self.hobby_town_suggest.hide()
+        town_row = QHBoxLayout()
+        town_row.addWidget(self.hobby_town, 1)
+        town_row.addWidget(self.hobby_town_suggest)
+        f.addRow("Miejscowość ręcznie:", town_row)
         f.addRow("", plain_label("Tylko dla materiałów bez GPS lub gdy miejscowości nie rozpoznano.",
                                  wrap=True, hint=True))
         self.hobby_summary = plain_label("", wrap=True)
@@ -470,8 +481,35 @@ class SortTab(QWidget):
 
     def _on_mode_changed(self) -> None:
         self.settings.set("import_mode", core.MODE_COPY if self.mode_copy.isChecked() else core.MODE_MOVE)
-        self.move_btn.setText("Kopiuj do archiwum" if self.mode_copy.isChecked() else "Przenieś materiały")
+        self._update_move_text()
         self._schedule_refresh()
+
+    def _import_groups(self) -> list[MediaGroup]:
+        """Co zostanie zaimportowane: zaznaczone grupy, a bez zaznaczenia – wszystkie.
+        Pozostałe (np. bez miejscowości) nie blokują importu zaznaczonych."""
+        selected = set(self._selected_keys())
+        if selected and len(selected) < len(self.groups):
+            return [g for g in self.groups if g.key in selected]
+        return list(self.groups)
+
+    def _update_move_text(self) -> None:
+        copy = self.mode_copy.isChecked()
+        n = len(self._selected_keys())
+        if n and n < len(self.groups):
+            self.move_btn.setText(f"{'Kopiuj' if copy else 'Przenieś'} zaznaczone ({n})")
+        else:
+            self.move_btn.setText("Kopiuj do archiwum" if copy else "Przenieś materiały")
+
+    def _hover_info(self, item) -> tuple[Path | None, str]:
+        """Plik do podglądu po najechaniu na wiersz listy i podpis (zwykły tekst)."""
+        g = self.group_by_key.get(item.data(0, Qt.ItemDataRole.UserRole))
+        if g is None:
+            return None, ""
+        when = f" · {g.captured:%Y-%m-%d %H:%M}" if g.captured else ""
+        path = preview_file(g.files)
+        if path is None:
+            return None, f"{g.name} ({g.extensions}){when}\nPodgląd tylko dla zdjęć."
+        return path, f"{path.name}{when}"
 
     def _apply_imported_filter(self) -> None:
         if not self.all_groups:
@@ -549,6 +587,7 @@ class SortTab(QWidget):
         return [g.key for g in self.groups] if self.scope_all.isChecked() else self._selected_keys()
 
     def _on_tree_select(self) -> None:
+        self._update_move_text()
         if self._selected_keys() and not self.scope_sel.isChecked():
             self.scope_sel.setChecked(True)      # wywoła _sync_form
         else:
@@ -826,6 +865,9 @@ class SortTab(QWidget):
         if ambiguous:
             text += f" Do wyboru z listy: {groups_word(ambiguous)} (poniżej)."
         warn = (missing and not a.place.strip()) or ambiguous
+        suggestion = pl.suggest_town(members, self.places) if missing and not a.place.strip() else ""
+        self.hobby_town_suggest.setText(f"Z GPS pozostałych: {suggestion}")
+        self.hobby_town_suggest.setVisible(bool(suggestion))
         self.hobby_summary.setText(text)
         self.hobby_summary.setStyleSheet("color: #c62828;" if warn else "")
         name = a.name.strip()
@@ -838,6 +880,31 @@ class SortTab(QWidget):
         else:
             scope = "Nazwa dotyczy tej grupy materiałów."
         self.hobby_name_scope.setText(scope)
+
+    def _use_hobby_town_suggestion(self) -> None:
+        if self.current is not None and self.current.category == pl.CATEGORY_HOBBY:
+            self.hobby_town.setText(pl.suggest_town(self._members(self.current), self.places))
+
+    def _groups_without_town(self) -> list[MediaGroup]:
+        """Grupy Hobby, dla których nie ma miejscowości (brak GPS lub wyniku i brak wpisu ręcznego)."""
+        out = []
+        for g in self._import_groups():
+            a = self.assignment_of.get(g.key)
+            p = self.places.get(g.key)
+            if (a is not None and a.category == pl.CATEGORY_HOBBY and not pl.is_pending(g, self.places)
+                    and not (p is not None and p.ambiguous) and not pl.hobby_location(g, p, a)[0]):
+                out.append(g)
+        return out
+
+    def _show_groups(self, groups: list[MediaGroup]) -> None:
+        """Zaznacza grupy na liście (formularz pokazuje ich przypisanie)."""
+        self.tree.clearSelection()
+        for g in groups:
+            item = self.items.get(g.key)
+            if item is not None:
+                item.setSelected(True)
+        if groups and groups[0].key in self.items:
+            self.tree.scrollToItem(self.items[groups[0].key])
 
     def _retry_geo(self) -> None:
         self.geo.reset_network_state()
@@ -924,12 +991,18 @@ class SortTab(QWidget):
 
     def _refresh_preview(self) -> None:
         target = self.target.text().strip()
-        self.plan = pl.build_plan(self.groups, self.assignment_of, self.places, target)
+        groups = self._import_groups()
+        self.plan = pl.build_plan(groups, self.assignment_of, self.places, target)
         folder_error = pl.check_folders(self.source.text().strip(), target)
         errors = list(self.plan.errors)
         if folder_error:
             errors.insert(0, folder_error)
         self.preview.clear()
+        if len(groups) < len(self.groups):
+            only = QTreeWidgetItem([f"Tylko zaznaczone: {groups_word(len(groups))} z {len(self.groups)} – "
+                                    "pozostałe zostaną na liście", ""])
+            only.setForeground(0, QBrush(QColor("#1565c0")))
+            self.preview.addTopLevelItem(only)
         root = QTreeWidgetItem([(Path(target).name or target) if target else "(wybierz archiwum)", ""])
         self.preview.addTopLevelItem(root)
         counts: dict[Path, int] = {}
@@ -957,7 +1030,7 @@ class SortTab(QWidget):
                                   "przed importem zapytam: zmienić nazwę, nadpisać czy pominąć", ""])
             it.setForeground(0, QBrush(QColor("#b26a00")))
             self.preview.addTopLevelItem(it)
-        incomplete = len(self.groups) - unassigned - len(self.plan.group_dirs)
+        incomplete = len(groups) - unassigned - len(self.plan.group_dirs)
         if incomplete > 0:
             it = QTreeWidgetItem([f"Niekompletne dane: {groups_word(incomplete)}", ""])
             it.setForeground(0, QBrush(ERROR_COLOR))
@@ -975,7 +1048,10 @@ class SortTab(QWidget):
         else:
             self.errors_label.setText("\n".join(f"• {e}" for e in shown))
             self.errors_label.setStyleSheet("color: #c62828;")
-        self.move_btn.setEnabled(self.plan.ready and not folder_error and not self.busy)
+        # Przycisk aktywny zawsze, gdy są materiały – po kliknięciu wyjaśnia, czego brakuje
+        self.move_btn.setEnabled(bool(self.groups) and not self.busy)
+        self.move_btn.setToolTip("" if self.plan.ready and not folder_error else
+                                 "Najpierw uzupełnij:\n" + "\n".join(f"• {e}" for e in errors[:8]))
 
     # ══ Przenoszenie i cofanie ═════════════════════════════════
     def _catalog_info(self) -> dict[str, dict]:
@@ -1000,8 +1076,11 @@ class SortTab(QWidget):
     def _move(self) -> None:
         self._refresh_preview()
         plan = self.plan
-        if plan is None or not plan.ready or self.busy:
-            QMessageBox.warning(self, "Sortowanie", "Uzupełnij kategorię i wymagane pola przed przeniesieniem.")
+        if self.busy or plan is None:
+            return
+        folder_error = pl.check_folders(self.source.text().strip(), self.target.text().strip())
+        if not plan.ready or folder_error:
+            self._explain_not_ready(plan, folder_error)
             return
         copy = self.mode_copy.isChecked()
         root = Path(self.target.text().strip())
@@ -1010,7 +1089,8 @@ class SortTab(QWidget):
             dlg = ConflictDialog(self, plan.unresolved, str(root), copy)
             if not dlg.exec():
                 return
-            plan = pl.build_plan(self.groups, self.assignment_of, self.places, root, resolutions=dlg.resolutions())
+            plan = pl.build_plan(self._import_groups(), self.assignment_of, self.places, root,
+                                 resolutions=dlg.resolutions())
             if plan.unresolved or plan.errors:   # coś zmieniło się na dysku w międzyczasie
                 QMessageBox.warning(self, "Sortowanie", "Pliki w archiwum zmieniły się – spróbuj ponownie.")
                 return
@@ -1038,6 +1118,28 @@ class SortTab(QWidget):
         self._set_busy(True, "Kopiowanie materiałów do archiwum…" if copy else "Przenoszenie materiałów…")
         moves = core.with_backups(list(plan.moves), root)
         threading.Thread(target=self._move_worker, args=(moves, root, info, mode), daemon=True).start()
+
+    def _explain_not_ready(self, plan: pl.ImportPlan, folder_error: str | None) -> None:
+        verb = "skopiować" if self.mode_copy.isChecked() else "przenieść"
+        errors = ([folder_error] if folder_error else []) + list(plan.errors)
+        if not errors and not plan.moves and not plan.unresolved:
+            errors = ["Brak materiałów do zaimportowania."]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Sortowanie")
+        box.setTextFormat(Qt.TextFormat.PlainText)
+        box.setText(f"Nie można jeszcze {verb} materiałów. Uzupełnij:")
+        box.setInformativeText("\n".join(f"• {e}" for e in errors[:10]))
+        missing = self._groups_without_town()
+        show_btn = None
+        if missing:
+            show_btn = box.addButton(f"Pokaż materiały bez miejscowości ({len(missing)})",
+                                     QMessageBox.ButtonRole.ActionRole)
+        box.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        box.exec()
+        if show_btn is not None and box.clickedButton() is show_btn:
+            self._show_groups(missing)
+            self.hobby_town.setFocus()
 
     def _move_worker(self, moves: list[core.Move], root: Path, info: dict, mode: str = core.MODE_MOVE) -> None:
         paths = [m.source for m in moves] + [m.target for m in moves]
