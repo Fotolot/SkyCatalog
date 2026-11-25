@@ -10,8 +10,8 @@ import math
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QCursor
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit, QMenu,
+from PySide6.QtGui import QCursor, QKeySequence, QShortcut
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHBoxLayout, QLineEdit,
                                QMessageBox, QProgressBar, QPushButton, QSplitter, QTabWidget, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
@@ -20,8 +20,9 @@ from ..config import Settings
 from ..mapgeom import thin_latlon
 from ..scanner import Scanner, ScanProgress
 from ..tiles import provider_from_settings
-from .common import DateField, Poster, flow, materials_word, menu_text, plain_label, scrollable, shrinkable, splitter
+from .common import DateField, Poster, flow, materials_word, plain_label, scrollable, shrinkable, splitter
 from .dialogs import ScanSettingsDialog, SkipsDialog
+from .place_list import PlaceList
 from .preview_panel import PreviewPanel
 from .webmap import MapWidget
 
@@ -153,6 +154,11 @@ class MapTab(QWidget):
         cl.addWidget(self.map_status)
         self.map = MapWidget(center)
         self.map.message.connect(self._on_map_message)
+        # Lista materiałów z jednego miejsca – nie blokuje okna (podgląd i odtwarzacz działają)
+        self.place_list = PlaceList(self.map)
+        self.place_list.hovered.connect(lambda mid: self.select(mid))
+        self.place_list.chosen.connect(lambda mid: self.select(mid))
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self.map, activated=self.place_list.dismiss)
         cl.addWidget(self.map, 1)
 
         # Podgląd
@@ -327,23 +333,13 @@ class MapTab(QWidget):
         flt = self.filters()
         hits = self.catalog.pick(flt, lat, lon, tol)
         if not hits:
+            self.place_list.dismiss()          # kliknięcie w puste miejsce mapy zamyka listę
             return
         if len(hits) == 1:
+            self.place_list.dismiss()
             self.select(hits[0]["id"])
             return
-        menu = QMenu(self)
-        menu.setToolTipsVisible(True)
-        title = QAction(f"W tym miejscu: {materials_word(len(hits))} – wybierz", menu)
-        title.setEnabled(False)
-        menu.addAction(title)
-        menu.addSeparator()
-        for h in hits:
-            icon = "🎬" if h["kind"] == cat.KIND_VIDEO else "📷"
-            extra = " (trasa)" if h["on_track"] else ""
-            act = QAction(menu_text(f"{icon} {h['name']}{extra}"), menu)
-            act.triggered.connect(lambda _c=False, mid=h["id"]: self.select(mid))
-            menu.addAction(act)
-        menu.exec(QCursor.pos())
+        self.place_list.show_items(hits, self.map.mapFromGlobal(QCursor.pos()))
 
     def select(self, material_id: int | None, fit: bool = False, from_list: bool = False) -> None:
         if material_id is None:

@@ -203,7 +203,11 @@ Zasady:
 
 * Zdjęcie z poprawną orientacją (EXIF), nazwa, ścieżka, data, GPS, rozmiar, rozdzielczość i dane aparatu.
   DNG jest pokazywany przez wbudowany w plik podgląd JPEG.
-* Film: odtwarzacz (odtwarzanie, pauza, przewijanie, głośność), punkt startowy, czas trwania,
+* Kilka materiałów w jednym miejscu: kliknięcie punktu otwiera listę **„W tym miejscu: …”**, która nie
+  blokuje okna – **najechanie** na pozycję od razu pokazuje ją w panelu podglądu (i na mapie),
+  kliknięcie zaznacza ją na liście materiałów. Lista zamyka się przyciskiem ✕, klawiszem Esc albo
+  kliknięciem w puste miejsce mapy. Przy filmie od razu można go odtworzyć, zatrzymać lub przewinąć.
+* Film: odtwarzacz (odtwarzanie, pauza, stop, przewijanie, głośność), punkt startowy, czas trwania,
   rozdzielczość, FPS, dane sprzętu i status powiązanego SRT.
 * **Przejdź do pliku** (Eksplorator z zaznaczonym plikiem), **Otwórz w aplikacji domyślnej**, **Kopiuj ścieżkę**.
 * Brak kodeka lub podglądu nie powoduje awarii – pojawia się komunikat i możliwość otwarcia pliku
