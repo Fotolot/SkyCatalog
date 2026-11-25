@@ -119,6 +119,34 @@ class TownTests(unittest.TestCase):
         self.assertIsNone(r.town)
         self.assertEqual(r.candidates, ["Obszar E", "Wieś F"])
 
+    def test_same_town_in_several_admin_areas_is_one_town(self):
+        """Miasto, gmina miejska i powiat grodzki o tej samej nazwie – bez pytania „Rzeszów / Rzeszów / Rzeszów”."""
+        areas, nodes = self.areas(
+            rel(11, {"name": "Rzeszów", "boundary": "administrative", "admin_level": "6"}, square(LAT, LON, 0.05)),
+            rel(12, {"name": "Rzeszów", "boundary": "administrative", "admin_level": "7"}, square(LAT, LON, 0.05)),
+            rel(13, {"name": "Rzeszów", "boundary": "administrative", "admin_level": "8"}, square(LAT, LON, 0.05)),
+        )
+        r = osm.decide_town(areas, nodes)
+        self.assertEqual(r.town, "Rzeszów")
+        self.assertEqual(r.candidates, [])
+        self.assertFalse(r.ambiguous)
+
+    def test_duplicate_candidates_are_merged(self):
+        areas, nodes = self.areas(
+            rel(14, {"name": "Obszar E", "boundary": "administrative", "admin_level": "8"}, square(LAT, LON, 0.01)),
+            rel(15, {"name": "Obszar E", "boundary": "administrative", "admin_level": "7"}, square(LAT, LON, 0.02)),
+            nodes=[node(41, LAT + 0.004, LON, {"name": "Wieś F", "place": "village"})],
+        )
+        self.assertEqual(osm.decide_town(areas, nodes).candidates, ["Obszar E", "Wieś F"])
+
+    def test_cached_result_with_duplicates_is_fixed(self):
+        """Wyniki zapisane w cache przez starszą wersję („[cache]”) też są scalane."""
+        old = {"town": None, "candidates": ["Rzeszów", "Rzeszów", "Rzeszów"], "reason": "brak obszaru"}
+        r = osm.TownResult.from_json(old)
+        self.assertEqual((r.town, r.candidates, r.ambiguous), ("Rzeszów", [], False))
+        one = osm.TownResult.from_json({"town": None, "candidates": ["Wieś F"], "reason": "daleko"})
+        self.assertTrue(one.ambiguous)      # jedna, odległa propozycja nadal do potwierdzenia
+
     def test_two_settlement_areas_ask_user(self):
         areas, nodes = self.areas(
             rel(5, {"name": "Wieś G", "place": "village"}, square(LAT, LON, 0.02)),
