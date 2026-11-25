@@ -89,6 +89,9 @@ class HobbyFormTests(unittest.TestCase):
         self.assertEqual(self.tab.hobby_place_name.text(), "")     # nowa część – własna nazwa
         self.tab.hobby_place_name.setText("Bulwary")
         plan = self.plan()
+        self.assertEqual(set(plan.group_dirs), {"C"})              # zaznaczona tylko C – tylko ona
+        self.tab.tree.clearSelection()
+        plan = self.plan()
         self.assertTrue(plan.ready, plan.errors)
         self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/Pomnik/WIDEO"))
         self.assertEqual(plan.group_dirs["C"], Path("Hobby/Rzeszów/Bulwary/WIDEO"))
@@ -125,6 +128,37 @@ class HobbyFormTests(unittest.TestCase):
         self.assertTrue(plan.ready, plan.errors)
         self.assertEqual(plan.group_dirs["D"], Path("Hobby/Rzeszów/Zdjęcia"))
         self.assertTrue(self.tab.hobby_town_suggest.isHidden())
+
+    def test_selected_groups_import_without_others_blocking(self):
+        """Zaznaczone grupy z lokalizacją importują się, choć inne nie mają miejscowości."""
+        g = group("D", KIND_PHOTO, gps=None)
+        self.tab._on_scanned(self.tab.groups + [g], None, set())
+        for k in "ABC":
+            self.tab.places[k] = Place(town="Rzeszów")
+        self.tab.scope_all.setChecked(True)
+        self.tab.category_boxes[pl.CATEGORY_HOBBY].click()
+        self.assertFalse(self.plan().ready)                       # wszystkie: D bez miejscowości
+        self.select("A", "B")
+        self.assertIn("zaznaczone (2)", self.tab.move_btn.text())
+        plan = self.plan()
+        self.assertTrue(plan.ready, plan.errors)
+        self.assertEqual(set(plan.group_dirs), {"A", "B"})
+        self.assertEqual({m.source.stem for m in plan.moves}, {"A", "B"})
+        self.assertIn("Tylko zaznaczone", self.tab.preview.topLevelItem(0).text(0))
+        self.select("A", "D")                                      # zaznaczona D – nadal blokuje
+        self.assertFalse(self.plan().ready)
+        self.tab.tree.clearSelection()
+        self.assertNotIn("zaznaczone", self.tab.move_btn.text())
+
+    def test_hover_preview_info(self):
+        from sortowanie.ui.hover_preview import preview_file
+        path, caption = self.tab._hover_info(self.tab.items["B"])
+        self.assertEqual(path, Path("/karta/B.JPG"))
+        self.assertIn("B.JPG", caption)
+        path, caption = self.tab._hover_info(self.tab.items["A"])     # film – bez podglądu obrazu
+        self.assertIsNone(path)
+        self.assertEqual(preview_file([Path("x.DNG"), Path("x.JPG")]), Path("x.JPG"))
+        self.assertEqual(preview_file([Path("x.DNG")]), Path("x.DNG"))
 
     def test_ambiguous_town_choice(self):
         self.tab.places["A"] = Place(town=None, town_candidates=["Wieś G", "Przysiółek H"])
