@@ -159,7 +159,7 @@ class PlannerTests(unittest.TestCase):
         plan = pl.build_plan([group("A", gps=None)], {"A": a}, {}, "")
         self.assertFalse(plan.ready)
 
-    def test_video_and_srt_share_destination_and_collision_suffix(self):
+    def _two_cards_with_existing_srt(self):
         a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg", date="2026-11-11", place="Rzeszów")
         target = self.arch / "Eventy/Rzeszów/2026-11-11 Bieg/WIDEO"
         target.mkdir(parents=True)
@@ -167,10 +167,55 @@ class PlannerTests(unittest.TestCase):
         # Dwie karty z tym samym numerem pliku
         g1 = group("k1", files=[Path("/k1/DJI_0001.MP4"), Path("/k1/DJI_0001.SRT")])
         g2 = group("k2", files=[Path("/k2/DJI_0001.MP4"), Path("/k2/DJI_0001.SRT")])
+        return [g1, g2], {"k1": a, "k2": a}, target
+
+    def test_existing_file_requires_decision(self):
+        groups, assign, target = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch)
+        self.assertEqual([c.key for c in plan.unresolved], ["k1", "k2"])
+        self.assertEqual(plan.conflicts[0].pairs, [(Path("/k1/DJI_0001.SRT"), target / "DJI_0001.SRT")])
+        self.assertEqual(plan.moves, [])          # bez decyzji nic nie jest kopiowane
+        self.assertTrue(plan.ready)               # przycisk aktywny – kliknięcie zada pytanie
+
+    def test_rename_keeps_both_and_video_matches_srt(self):
+        groups, assign, _ = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_RENAME, "k2": pl.ACTION_RENAME})
+        self.assertEqual(plan.unresolved, [])
+        self.assertEqual([m.target.name for m in plan.moves],
+                         ["DJI_0001 (1).MP4", "DJI_0001 (1).SRT", "DJI_0001 (2).MP4", "DJI_0001 (2).SRT"])
+        self.assertFalse(any(m.overwrite for m in plan.moves))
+
+    def test_overwrite_marks_only_existing_files(self):
+        groups, assign, target = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_OVERWRITE, "k2": pl.ACTION_OVERWRITE})
+        k1 = [m for m in plan.moves if m.source.parent == Path("/k1")]
+        self.assertEqual([(m.target.name, m.overwrite) for m in k1],
+                         [("DJI_0001.MP4", False), ("DJI_0001.SRT", True)])
+        # druga karta nie może nadpisać pliku dopiero co zaimportowanego – dostaje dopisek
+        k2 = [m for m in plan.moves if m.source.parent == Path("/k2")]
+        self.assertEqual([(m.target.name, m.overwrite) for m in k2],
+                         [("DJI_0001 (1).MP4", False), ("DJI_0001 (1).SRT", False)])
+
+    def test_skip_leaves_group_out(self):
+        groups, assign, _ = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_SKIP, "k2": pl.ACTION_RENAME})
+        self.assertEqual(plan.skipped, ["k1"])
+        self.assertEqual({m.source.parent for m in plan.moves}, {Path("/k2")})
+        self.assertEqual(plan.moves[0].target.name, "DJI_0001 (1).MP4")
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_SKIP, "k2": pl.ACTION_SKIP})
+        self.assertFalse(plan.ready)              # nic do zrobienia
+
+    def test_same_names_within_one_import_get_suffix_without_question(self):
+        a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg", date="2026-11-11", place="Rzeszów")
+        g1 = group("k1", files=[Path("/k1/DJI_0001.MP4")])
+        g2 = group("k2", files=[Path("/k2/DJI_0001.MP4")])
         plan = pl.build_plan([g1, g2], {"k1": a, "k2": a}, {}, self.arch)
-        names = [m.target.name for m in plan.moves]
-        self.assertEqual(names, ["DJI_0001 (1).MP4", "DJI_0001 (1).SRT",
-                                 "DJI_0001 (2).MP4", "DJI_0001 (2).SRT"])
+        self.assertEqual(plan.conflicts, [])
+        self.assertEqual([m.target.name for m in plan.moves], ["DJI_0001.MP4", "DJI_0001 (1).MP4"])
 
     def test_sanitize(self):
         self.assertEqual(pl.sanitize_component('Mecz: "Resovia" vs Stal?'), "Mecz- -Resovia- vs Stal-")

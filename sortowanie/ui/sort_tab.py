@@ -23,6 +23,7 @@ from ..config import Settings
 from ..geo import DecisionStore, LocationService, OsmCache, Place, SOURCE_DECISION, SOURCE_NONE
 from ..media import MediaGroup, scan_source
 from ..osm import ATTRIBUTION, ATTRIBUTION_URL, TownResult
+from .conflict_dialog import ConflictDialog
 from .common import (DateField, Poster, files_word, flow, groups_word, human_size, plain_label, scrollable, shrinkable,
                      splitter)
 
@@ -951,6 +952,11 @@ class SortTab(QWidget):
             it = QTreeWidgetItem([f"Bez kategorii: {groups_word(unassigned)}", ""])
             it.setForeground(0, QBrush(ERROR_COLOR))
             self.preview.addTopLevelItem(it)
+        if self.plan.conflicts:
+            it = QTreeWidgetItem([f"Pliki o zajętych nazwach: {groups_word(len(self.plan.conflicts))} – "
+                                  "przed importem zapytam: zmienić nazwę, nadpisać czy pominąć", ""])
+            it.setForeground(0, QBrush(QColor("#b26a00")))
+            self.preview.addTopLevelItem(it)
         incomplete = len(self.groups) - unassigned - len(self.plan.group_dirs)
         if incomplete > 0:
             it = QTreeWidgetItem([f"Niekompletne dane: {groups_word(incomplete)}", ""])
@@ -959,9 +965,12 @@ class SortTab(QWidget):
         self.preview.expandAll()
         shown = errors[:6] + ([f"… i {len(errors) - 6} więcej"] if len(errors) > 6 else [])
         if not errors and self.plan.ready:
-            n = len(self.plan.moves)
+            n = sum(len(g.files) for g in self.groups if g.key in self.plan.group_dirs)
             verb = "skopiowania" if self.mode_copy.isChecked() else "przeniesienia"
-            self.errors_label.setText(f"Gotowe do {verb}: {n} {files_word(n)}.")
+            text = f"Gotowe do {verb}: {n} {files_word(n)}."
+            if self.plan.conflicts:
+                text += f" Nazwy zajęte w archiwum: {groups_word(len(self.plan.conflicts))} – zapytam przed importem."
+            self.errors_label.setText(text)
             self.errors_label.setStyleSheet("color: #2e7d32;")
         else:
             self.errors_label.setText("\n".join(f"• {e}" for e in shown))
@@ -994,20 +1003,41 @@ class SortTab(QWidget):
         if plan is None or not plan.ready or self.busy:
             QMessageBox.warning(self, "Sortowanie", "Uzupełnij kategorię i wymagane pola przed przeniesieniem.")
             return
-        size = sum(g.size for g in self.groups if g.key in plan.group_dirs)
         copy = self.mode_copy.isChecked()
+        root = Path(self.target.text().strip())
+        if plan.unresolved:
+            # W archiwum są już pliki o tych samych nazwach – decyduje użytkownik
+            dlg = ConflictDialog(self, plan.unresolved, str(root), copy)
+            if not dlg.exec():
+                return
+            plan = pl.build_plan(self.groups, self.assignment_of, self.places, root, resolutions=dlg.resolutions())
+            if plan.unresolved or plan.errors:   # coś zmieniło się na dysku w międzyczasie
+                QMessageBox.warning(self, "Sortowanie", "Pliki w archiwum zmieniły się – spróbuj ponownie.")
+                return
+        if not plan.moves:
+            QMessageBox.information(self, "Sortowanie", "Wszystkie materiały zostały pominięte – nic nie zrobiono.")
+            return
+        sources = {m.source for m in plan.moves}
+        size = sum(p.stat().st_size for p in sources if p.exists())
         verb = "Skopiować" if copy else "Przenieść"
         extra = "\n\nOryginały pozostaną w miejscu importu (np. na karcie)." if copy else ""
+        overwritten = sum(1 for m in plan.moves if m.overwrite)
+        if overwritten:
+            extra += (f"\n\nNadpisanych zostanie {overwritten} {files_word(overwritten)} w archiwum – poprzednie "
+                      f"wersje trafią do folderu {core.BACKUP_FOLDER}.")
+        if plan.skipped:
+            extra += f"\n\nPominięte: {groups_word(len(plan.skipped))}."
         if QMessageBox.question(self, "Sortowanie", f"{verb} {len(plan.moves)} {files_word(len(plan.moves))} "
                                 f"({human_size(size)}) do archiwum?\n\n{self.target.text()}{extra}") != QMessageBox.StandardButton.Yes:
             return
+        self.plan = plan
         self.settings.set("target_root", self.target.text().strip())
         self.settings.save()
         info = self._catalog_info()
         mode = core.MODE_COPY if copy else core.MODE_MOVE
         self._set_busy(True, "Kopiowanie materiałów do archiwum…" if copy else "Przenoszenie materiałów…")
-        threading.Thread(target=self._move_worker, args=(list(plan.moves), Path(self.target.text().strip()), info, mode),
-                         daemon=True).start()
+        moves = core.with_backups(list(plan.moves), root)
+        threading.Thread(target=self._move_worker, args=(moves, root, info, mode), daemon=True).start()
 
     def _move_worker(self, moves: list[core.Move], root: Path, info: dict, mode: str = core.MODE_MOVE) -> None:
         paths = [m.source for m in moves] + [m.target for m in moves]
@@ -1023,6 +1053,9 @@ class SortTab(QWidget):
             if done:
                 pairs = [(str(m.source), str(m.target)) for m in done]
                 try:
+                    replaced = [str(m.target) for m in done if m.backup is not None]
+                    if replaced:      # poprzednie wersje są teraz w kopii zapasowej, nie w archiwum
+                        self.catalog.forget_paths(replaced)
                     if mode == core.MODE_COPY:
                         op_id, ids = self.catalog.apply_copies(pairs, info)
                     else:
@@ -1056,6 +1089,10 @@ class SortTab(QWidget):
             self._sync_form()
         self._refresh_undo_button()
         msg = f"{'Skopiowano' if mode == core.MODE_COPY else 'Przeniesiono'} {len(done)} {files_word(len(done))}."
+        replaced = sum(1 for m in done if m.backup is not None)
+        if replaced:
+            msg += (f" Nadpisano {replaced} {files_word(replaced)} – poprzednie wersje są w folderze "
+                    f"{core.BACKUP_FOLDER} w archiwum.")
         if mode == core.MODE_COPY and done and self._card is not None and not failed:
             msg += f" Oryginały są nadal na karcie {self._card.title} – możesz ją bezpiecznie wysunąć."
         if failed:
@@ -1080,6 +1117,9 @@ class SortTab(QWidget):
         question = (f"Usunąć {len(moves)} {files_word(len(moves))} skopiowanych do archiwum w ostatnim imporcie?\n"
                     "Oryginały (np. na karcie) nie zostaną zmienione." if mode == core.MODE_COPY else
                     f"Przywrócić {len(moves)} {files_word(len(moves))} do poprzednich lokalizacji?")
+        replaced = sum(1 for m in moves if m.backup is not None)
+        if replaced:
+            question += f"\n\nNadpisane pliki ({replaced}) wrócą do poprzednich wersji."
         if QMessageBox.question(self, "Sortowanie", question) != QMessageBox.StandardButton.Yes:
             return
         self._undo_mode = mode
@@ -1108,6 +1148,13 @@ class SortTab(QWidget):
                     self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
                 undone = {m.source for m in done}
                 remaining = [m for m in moves if m.target not in undone]
+            restored = [str(m.target) for m in moves if m.backup is not None
+                        and m.target.exists() and not m.backup.exists()]
+            if restored:
+                try:
+                    ids = sorted(set(ids) | set(self.catalog.index_paths(restored)))
+                except Exception as exc:
+                    self.poster.post(("net_status", f"Nie zaktualizowano katalogu mapy: {exc}"))
             if not failed:
                 core.clear_history()
             else:

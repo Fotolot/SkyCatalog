@@ -107,5 +107,104 @@ class HobbyFormTests(unittest.TestCase):
         self.assertEqual(self.plan().group_dirs["A"], Path("Hobby/Przysiółek H/WIDEO"))
 
 
+@unittest.skipIf(QApplication is None, "PySide6 niedostępny")
+class NameConflictFlowTests(unittest.TestCase):
+    """Plik o tej samej nazwie w archiwum: pytanie, nadpisanie z kopią zapasową, cofnięcie."""
+
+    def setUp(self):
+        self.app = QApplication.instance() or QApplication([])
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        root = Path(self._tmp.name)
+        self._env = mock.patch.dict(os.environ, {"APPDATA": str(root / "roaming"),
+                                                 "LOCALAPPDATA": str(root / "local")})
+        self._env.start()
+        from sortowanie import catalog as cat
+        from sortowanie.config import Settings
+        from sortowanie.ui.sort_tab import SortTab
+        self.arch = root / "Archiwum"
+        self.existing = self.arch / "Hobby" / "Rzeszów" / "Zdjęcia" / "DJI_0001.JPG"
+        self.existing.parent.mkdir(parents=True)
+        self.existing.write_bytes(b"stare zdjecie")
+        self.src = root / "karta" / "DJI_0001.JPG"
+        self.src.parent.mkdir()
+        self.src.write_bytes(b"nowe zdjecie z karty")
+        settings = Settings(root / "ustawienia.json")
+        settings.set("offline", True)
+        settings.set("target_root", str(self.arch))
+        self.tab = SortTab(settings, cat.Catalog(root / "katalog.sqlite"))
+        self.tab._card_timer.stop()
+        self.tab.mode_copy.setChecked(True)
+        g = MediaGroup(key="A", name="DJI_0001", files=[self.src], kind=KIND_PHOTO, gps=(50.03, 22.0))
+        self.tab._on_scanned([g], None, set())
+        self.tab.places["A"] = Place(town="Rzeszów")
+        self.tab.category_boxes[pl.CATEGORY_HOBBY].click()
+
+    def tearDown(self):
+        self.tab.deleteLater()
+        self._env.stop()
+        self._tmp.cleanup()
+
+    def run_move(self, action, answer=True):
+        from PySide6.QtWidgets import QMessageBox
+        from sortowanie.ui import sort_tab
+        asked = []
+
+        def fake_exec(dlg):
+            asked.append([c.key for c in dlg.conflicts])
+            dlg.set_all(action)
+            return 1 if answer else 0
+        with mock.patch.object(sort_tab.ConflictDialog, "exec", fake_exec), \
+                mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                mock.patch.object(QMessageBox, "information"), mock.patch.object(QMessageBox, "warning"):
+            self.tab._move()
+            self.wait()
+        return asked
+
+    def wait(self):
+        import time
+        end = time.monotonic() + 10
+        while (self.tab.busy) and time.monotonic() < end:
+            self.app.processEvents()
+            time.sleep(0.01)
+        self.app.processEvents()
+
+    def test_preview_warns_before_import(self):
+        self.tab._refresh_preview()
+        self.assertEqual([c.key for c in self.tab.plan.unresolved], ["A"])
+        self.assertIn("zapytam", self.tab.errors_label.text())
+
+    def test_cancel_changes_nothing(self):
+        asked = self.run_move(pl.ACTION_OVERWRITE, answer=False)
+        self.assertEqual(asked, [["A"]])
+        self.assertEqual(self.existing.read_bytes(), b"stare zdjecie")
+        self.assertEqual(len(list(self.existing.parent.iterdir())), 1)
+
+    def test_rename_keeps_both(self):
+        self.run_move(pl.ACTION_RENAME)
+        self.assertEqual(self.existing.read_bytes(), b"stare zdjecie")
+        self.assertEqual((self.existing.parent / "DJI_0001 (1).JPG").read_bytes(), b"nowe zdjecie z karty")
+
+    def test_skip_imports_nothing(self):
+        self.run_move(pl.ACTION_SKIP)
+        self.assertEqual(sorted(p.name for p in self.existing.parent.iterdir()), ["DJI_0001.JPG"])
+        self.assertTrue(self.src.exists())
+
+    def test_overwrite_then_undo(self):
+        from PySide6.QtWidgets import QMessageBox
+        from sortowanie import core
+        self.run_move(pl.ACTION_OVERWRITE)
+        self.assertEqual(self.existing.read_bytes(), b"nowe zdjecie z karty")
+        backups = list((self.arch / core.BACKUP_FOLDER).rglob("DJI_0001.JPG"))
+        self.assertEqual([b.read_bytes() for b in backups], [b"stare zdjecie"])
+        self.assertTrue(self.src.exists())                       # karta bez zmian
+        with mock.patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes), \
+                mock.patch.object(QMessageBox, "warning"):
+            self.tab._undo()
+            self.wait()
+        self.assertEqual(self.existing.read_bytes(), b"stare zdjecie")
+        self.assertFalse((self.arch / core.BACKUP_FOLDER).exists())
+        self.assertIsNotNone(self.tab.catalog.material_id_for_path(str(self.existing)))
+
+
 if __name__ == "__main__":
     unittest.main()

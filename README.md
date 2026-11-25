@@ -96,13 +96,27 @@ Zasady:
 - **Kolejne karty** – w Eventach i Zleceniach lista „Dołącz do istniejącego” pokazuje
   foldery już zapisane w archiwum, więc materiały z kilku kart trafiają do tego samego folderu.
 - **Powiązane pliki** – film, jego `.SRT`, `.LRF` i inne pliki o tej samej nazwie tworzą
-  jedną grupę i zawsze otrzymują tę samą kategorię i to samo miejsce docelowe. Przy
-  kolizji nazw cała grupa dostaje ten sam sufiks, np. `DJI_0001 (1).MP4` + `DJI_0001 (1).SRT`.
+  jedną grupę i zawsze otrzymują tę samą kategorię i to samo miejsce docelowe.
+- **Plik o tej samej nazwie w archiwum** – zanim cokolwiek zostanie skopiowane lub przeniesione,
+  program pokazuje okno **„Pliki o takich samych nazwach”** (rozmiar i data obu plików, z dopiskiem,
+  gdy wyglądają na ten sam plik) i pyta o każdą grupę:
+  - **Zmień nazwę nowego pliku (zachowaj oba)** – domyślnie; cała grupa dostaje ten sam dopisek,
+    np. `DJI_0001 (1).MP4` + `DJI_0001 (1).SRT`,
+  - **Nadpisz plik w archiwum** – nowy plik zajmuje miejsce starego; poprzednia wersja **nie jest
+    kasowana**, tylko przenoszona do folderu `.SkyCatalog-zastapione\<data_czas>\…` w archiwum.
+    „Cofnij ostatni import” przywraca ją na miejsce; folder można usunąć ręcznie, gdy nie jest potrzebny,
+  - **Pomiń (nie importuj)** – ta grupa nie jest kopiowana/przenoszona.
+
+  Przyciski „Zmień nazwę wszystkim / Nadpisz wszystkie / Pomiń wszystkie” ustawiają decyzję dla
+  całej listy, „Anuluj” nic nie zmienia. Podgląd struktury folderów wcześniej informuje, ile nazw
+  jest zajętych. Gdy dwa materiały z tego samego importu mają tę samą nazwę (np. dwie karty),
+  drugi zawsze dostaje dopisek `(1)` – bez pytania.
 - **Podgląd na żywo** – docelowa struktura folderów aktualizuje się podczas wypełniania
   formularza. Przycisk „Przenieś materiały” jest nieaktywny, dopóki każda grupa nie ma
   kategorii, a wymagane pola nie są uzupełnione.
-- **Bezpieczeństwo** – istniejące pliki nigdy nie są nadpisywane; ostatni import można
-  cofnąć przyciskiem „Cofnij ostatni import”.
+- **Bezpieczeństwo** – istniejące pliki są zastępowane wyłącznie po wybraniu „Nadpisz”, a ich
+  poprzednie wersje trafiają do kopii zapasowej; ostatni import można cofnąć przyciskiem
+  „Cofnij ostatni import”.
 
 ## Układ okna
 
@@ -123,9 +137,11 @@ Zasady:
   już zaimportowane** pokazuje je z dopiskiem „(już w archiwum)”.
 * Po wybraniu kategorii i uzupełnieniu formularza **Kopiuj do archiwum** kopiuje pliki: najpierw do
   pliku tymczasowego, potem po sprawdzeniu rozmiaru pod docelową nazwę (z zachowaniem daty). Przerwana
-  kopia nie zostawia uszkodzonych plików, istniejące pliki nigdy nie są nadpisywane, a na karcie
+  kopia nie zostawia uszkodzonych plików, istniejący plik o tej samej nazwie jest zastępowany tylko
+  po wybraniu „Nadpisz” (poprzednia wersja trafia do kopii zapasowej), a na karcie
   nic nie jest zmieniane ani usuwane – po zakończeniu kartę można bezpiecznie wysunąć.
-* **Cofnij ostatni import** po kopiowaniu usuwa wyłącznie utworzone kopie (oryginały zostają).
+* **Cofnij ostatni import** po kopiowaniu usuwa wyłącznie utworzone kopie (oryginały zostają),
+  a nadpisane pliki przywraca z kopii zapasowej.
 * Tryb **Przenieś / Kopiuj** można też wybrać ręcznie dla dowolnego folderu importu; wybór jest zapamiętywany.
 
 ## Mapa materiałów

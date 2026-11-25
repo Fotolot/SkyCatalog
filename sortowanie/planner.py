@@ -203,19 +203,54 @@ def validate_assignment(assignment: Assignment, groups: list[MediaGroup],
 
 # ── Plan importu ───────────────────────────────────────────────
 
+# Co zrobić, gdy w folderze docelowym jest już plik o tej samej nazwie (wybiera użytkownik)
+ACTION_RENAME = "zmień nazwę"      # zachowaj oba – nowy plik dostaje dopisek (1), (2)…
+ACTION_OVERWRITE = "nadpisz"       # poprzednia wersja trafia do kopii zapasowej w archiwum
+ACTION_SKIP = "pomiń"              # nie kopiuj / nie przenoś tej grupy
+
+ACTION_LABELS = {
+    ACTION_RENAME: "Zmień nazwę nowego pliku (zachowaj oba)",
+    ACTION_OVERWRITE: "Nadpisz plik w archiwum",
+    ACTION_SKIP: "Pomiń (nie importuj)",
+}
+
+
+@dataclass
+class Conflict:
+    """Grupa materiałów, której plik(i) mają nazwy zajęte w folderze docelowym."""
+
+    group: MediaGroup
+    pairs: list[tuple[Path, Path]]        # (plik z importu, istniejący plik w archiwum)
+
+    @property
+    def key(self) -> str:
+        return self.group.key
+
+
 @dataclass
 class ImportPlan:
     moves: list[Move]
     group_dirs: dict[str, Path]           # klucz grupy -> folder docelowy (względny)
     errors: list[str]
     unassigned: list[MediaGroup]
+    conflicts: list[Conflict] = field(default_factory=list)
+    resolutions: dict[str, str] = field(default_factory=dict)
+
+    @property
+    def unresolved(self) -> list[Conflict]:
+        """Konflikty nazw bez decyzji użytkownika – przed wykonaniem trzeba zapytać."""
+        return [c for c in self.conflicts if c.key not in self.resolutions]
+
+    @property
+    def skipped(self) -> list[str]:
+        return [c.key for c in self.conflicts if self.resolutions.get(c.key) == ACTION_SKIP]
 
     @property
     def ready(self) -> bool:
-        return not self.errors and not self.unassigned and bool(self.moves)
+        return not self.errors and not self.unassigned and bool(self.moves or self.unresolved)
 
 
-def _group_targets(group: MediaGroup, target_dir: Path, taken: set[Path]) -> list[Path]:
+def _renamed_targets(group: MediaGroup, target_dir: Path, taken: set[Path]) -> list[Path]:
     """Docelowe ścieżki plików grupy. Przy kolizji cała grupa dostaje ten sam sufiks,
     dzięki czemu film i jego SRT nadal mają pasujące nazwy."""
     for n in count(0):
@@ -226,10 +261,31 @@ def _group_targets(group: MediaGroup, target_dir: Path, taken: set[Path]) -> lis
     raise RuntimeError("unreachable")
 
 
+def _group_moves(group: MediaGroup, target_dir: Path, taken: set[Path], action: str | None
+                 ) -> tuple[list[Move], list[tuple[Path, Path]]]:
+    """Operacje dla grupy i lista konfliktów z plikami już leżącymi w archiwum.
+
+    Bez decyzji (``action`` None) grupa z konfliktem nie dostaje żadnych operacji – program
+    najpierw pyta użytkownika. Kolizje nazw wewnątrz jednego importu (np. dwie karty z tym
+    samym numerem pliku) zawsze dostają dopisek (1), (2)… – nic nie jest wtedy nadpisywane.
+    """
+    plain = [target_dir / p.name for p in group.files]
+    existing = [(src, dst) for src, dst in zip(group.files, plain) if dst.exists()]
+    if not existing:
+        return [Move(s, t) for s, t in zip(group.files, _renamed_targets(group, target_dir, taken))], []
+    if action is None or action == ACTION_SKIP:
+        return [], existing
+    if action == ACTION_OVERWRITE and not any(t in taken for t in plain):
+        return [Move(s, t, overwrite=t.exists()) for s, t in zip(group.files, plain)], existing
+    return [Move(s, t) for s, t in zip(group.files, _renamed_targets(group, target_dir, taken))], existing
+
+
 def build_plan(groups: list[MediaGroup], assignment_of: dict[str, Assignment | None],
                places: dict[str, Place], target_root: str | Path,
-               check_disk: bool = True) -> ImportPlan:
+               check_disk: bool = True, resolutions: dict[str, str] | None = None) -> ImportPlan:
+    """``resolutions``: klucz grupy → ACTION_* – decyzje użytkownika dla zajętych nazw plików."""
     errors: list[str] = []
+    resolutions = dict(resolutions or {})
     root = Path(target_root) if str(target_root or "").strip() else None
     if root is None:
         errors.append("Wybierz folder docelowy (archiwum).")
@@ -249,6 +305,7 @@ def build_plan(groups: list[MediaGroup], assignment_of: dict[str, Assignment | N
 
     group_dirs: dict[str, Path] = {}
     moves: list[Move] = []
+    conflicts: list[Conflict] = []
     taken: set[Path] = set()
     for g in groups:
         rel = relative_dir(g, assignment_of.get(g.key), places.get(g.key))
@@ -256,12 +313,17 @@ def build_plan(groups: list[MediaGroup], assignment_of: dict[str, Assignment | N
             continue
         group_dirs[g.key] = rel
         if root is not None and check_disk:
-            for src, dst in zip(g.files, _group_targets(g, root / rel, taken)):
-                taken.add(dst)
-                moves.append(Move(src, dst))
+            group_moves, existing = _group_moves(g, root / rel, taken, resolutions.get(g.key))
+            if existing:
+                conflicts.append(Conflict(g, existing))
+            for m in group_moves:
+                taken.add(m.target)
+            moves.extend(group_moves)
     if not groups:
         errors.append("Brak materiałów do przeniesienia.")
-    return ImportPlan(moves, group_dirs, errors, unassigned)
+    known = {c.key for c in conflicts}
+    resolutions = {k: v for k, v in resolutions.items() if k in known}
+    return ImportPlan(moves, group_dirs, errors, unassigned, conflicts, resolutions)
 
 
 def check_folders(source: str, target_root: str) -> str | None:

@@ -791,6 +791,25 @@ class Catalog:
                            data.get("event_date"), data.get("object"), mid[0]))
         return op_id, ids
 
+    def forget_paths(self, paths: list[str]) -> list[int]:
+        """Usuwa z katalogu wpisy plików, których już nie ma pod tą ścieżką (np. poprzednia wersja
+        nadpisanego pliku przeniesiona do kopii zapasowej). Pliki na dysku nie są zmieniane."""
+        c = self.conn()
+        touched = set()
+        with self._write_lock, c:
+            for t in paths:
+                row = c.execute("SELECT material_id FROM files WHERE path_key=?", (path_key(t),)).fetchone()
+                if row:
+                    touched.add(row[0])
+                    c.execute("DELETE FROM files WHERE path_key=?", (path_key(t),))
+            for mid in touched:
+                left = c.execute("SELECT COUNT(*) FROM files WHERE material_id=?", (mid,)).fetchone()[0]
+                if left == 0:
+                    c.execute("DELETE FROM materials WHERE id=?", (mid,))
+                else:
+                    self._refresh_material_paths(c, mid)
+        return sorted(touched)
+
     def remove_copies(self, targets: list[str]) -> list[int]:
         """Cofnięcie importu kopiującego: usuwa wpisy usuniętych kopii i rejestr importu."""
         c = self.conn()
