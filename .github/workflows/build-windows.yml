@@ -1,4 +1,4 @@
-name: Budowanie Sortowanie.exe (Windows)
+name: Budowanie SkyCatalog (Windows)
 
 on:
   push:
@@ -42,10 +42,10 @@ jobs:
           $env:LOCALAPPDATA = "$env:RUNNER_TEMP\local"
           $demo = "$env:RUNNER_TEMP\demo"
           python narzedzia/dane_demo.py "$demo"
-          New-Item -ItemType Directory -Force "$env:APPDATA\Sortowanie" | Out-Null
+          New-Item -ItemType Directory -Force "$env:APPDATA\SkyCatalog" | Out-Null
           # Podkład wyłączony (nieistniejący host): automat nie pobiera kafelków z serwerów OSM.
           $settings = @{ offline = $true; scan_drives = @("$demo"); tile_url = "https://kafelki.invalid/{z}/{x}/{y}.png" } | ConvertTo-Json
-          $settings | Set-Content -Encoding utf8 "$env:APPDATA\Sortowanie\ustawienia.json"
+          $settings | Set-Content -Encoding utf8 "$env:APPDATA\SkyCatalog\ustawienia.json"
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           function Snap($name) {
             $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -61,13 +61,13 @@ jobs:
             for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
             "ZRZUT-BASE64-END"
           }
-          $p = Start-Process -FilePath "dist\Sortowanie\Sortowanie.exe" -ArgumentList "--mapa", "--skanuj" -PassThru
+          $p = Start-Process -FilePath "dist\SkyCatalog_1.01\SkyCatalog_1.01.exe" -ArgumentList "--mapa", "--skanuj" -PassThru
           Start-Sleep -Seconds 40
           Snap "mapa"
           "Proces działa: $(-not $p.HasExited)"
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
           Start-Sleep -Seconds 2
-          $p = Start-Process -FilePath "dist\Sortowanie\Sortowanie.exe" -ArgumentList "`"$demo\Karta`"" -PassThru
+          $p = Start-Process -FilePath "dist\SkyCatalog_1.01\SkyCatalog_1.01.exe" -ArgumentList "`"$demo\Karta`"" -PassThru
           Start-Sleep -Seconds 25
           Snap "sortowanie"
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
@@ -79,12 +79,12 @@ jobs:
 
       - name: Spakowanie aplikacji
         shell: pwsh
-        run: Compress-Archive -Path dist\Sortowanie -DestinationPath Sortowanie-windows.zip
+        run: Compress-Archive -Path dist\SkyCatalog_1.01 -DestinationPath SkyCatalog_1.01.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Sortowanie-windows
-          path: Sortowanie-windows.zip
+          name: SkyCatalog_1.01
+          path: SkyCatalog_1.01.zip
           retention-days: 14
 
       - uses: actions/upload-artifact@v4

@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``Sortowanie.exe [folder_importu] [--mapa] [--skanuj]``"""
+    """``SkyCatalog_1.01.exe [folder_importu] [--mapa] [--skanuj]``"""
     argv = list(sys.argv if argv is None else argv)
     from .webmap import register_scheme
     register_scheme()                                  # przed utworzeniem QApplication

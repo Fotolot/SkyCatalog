@@ -92,7 +92,7 @@ def map_profile(parent: QObject | None = None) -> QWebEngineProfile:
     if _profile is None:
         storage = local_data_dir() / "przegladarka"
         # rodzicem jest aplikacja – profil musi żyć dłużej niż strony mapy
-        _profile = QWebEngineProfile("Sortowanie-mapa", QCoreApplication.instance())
+        _profile = QWebEngineProfile("SkyCatalog-mapa", QCoreApplication.instance())
         _profile.setPersistentStoragePath(str(storage / "dane"))
         _profile.setCachePath(str(storage / "cache"))
         _profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)

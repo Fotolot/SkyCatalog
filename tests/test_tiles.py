@@ -43,7 +43,7 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("OpenStreetMap", p2.attribution)     # oznaczenie OSM zawsze obecne
 
     def test_user_agent_identifies_app(self):
-        self.assertTrue(tiles.USER_AGENT.startswith("Sortowanie/"))
+        self.assertTrue(tiles.USER_AGENT.startswith("SkyCatalog/"))
 
 
 

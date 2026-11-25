@@ -98,7 +98,7 @@ class OverpassClient:
         return env or (self._endpoint_getter() or DEFAULT_ENDPOINT).strip()
 
     def user_agent(self) -> str:
-        ua = f"Sortowanie/{__version__} (aplikacja desktopowa do archiwizacji nagran)"
+        ua = f"SkyCatalog/{__version__} (aplikacja desktopowa do archiwizacji nagran)"
         contact = (self._contact_getter() or "").strip()
         return f"{ua} {contact}" if contact else ua
 

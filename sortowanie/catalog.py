@@ -9,7 +9,7 @@
 * kategoria, miejscowość i wydarzenie/zlecenie pochodzą WYŁĄCZNIE z operacji
   sortowania – nigdy z położenia pliku na dysku.
 
-Baza leży w %LOCALAPPDATA%\\Sortowanie\\katalog.sqlite i nie trafia do repozytorium.
+Baza leży w %LOCALAPPDATA%\\SkyCatalog\\katalog.sqlite i nie trafia do repozytorium.
 """
 
 from __future__ import annotations

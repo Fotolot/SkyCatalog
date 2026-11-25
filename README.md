@@ -1,6 +1,7 @@
-# Sortowanie
+# SkyCatalog 1.01
 
-Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki:
+Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki
+(repozytorium nazywa się `Sortowanie`, program – **SkyCatalog**):
 
 * **Sortowanie** – wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię (Hobby, Eventy,
   Zlecenia), a aplikacja przenosi filmy i zdjęcia do uporządkowanej struktury folderów,
@@ -14,13 +15,13 @@ Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, ka
 Program jest budowany automatycznie na Windows (GitHub Actions) przy każdej zmianie:
 
 1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions) i otwórz
-   najnowsze zakończone budowanie „Budowanie Sortowanie.exe (Windows)”.
-2. Na dole strony, w sekcji **Artifacts**, kliknij **Sortowanie-windows** (wymaga zalogowania).
-3. Rozpakuj ZIP (wewnątrz jest folder `Sortowanie`) i uruchom `Sortowanie\Sortowanie.exe`.
+   najnowsze zakończone budowanie „Budowanie SkyCatalog (Windows)”.
+2. Na dole strony, w sekcji **Artifacts**, kliknij **SkyCatalog_1.01** (wymaga zalogowania).
+3. Rozpakuj ZIP (wewnątrz jest folder `SkyCatalog_1.01`) i uruchom `SkyCatalog_1.01\SkyCatalog_1.01.exe`.
    Nie trzeba instalować Pythona. Cały folder trzymaj razem – zawiera bibliotekę Qt i przeglądarkę mapy.
 
 Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „Więcej informacji” →
-„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `Sortowanie.exe` – zostanie od razu wczytany.
+„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `SkyCatalog_1.01.exe` – zostanie od razu wczytany.
 
 ## Kategorie lotów
 
@@ -198,7 +199,7 @@ set SORTOWANIE_OVERPASS_URL=https://moj-serwer.example/api/interpreter
 py main.py
 ```
 
-**Cache i decyzje** (w `%APPDATA%\Sortowanie\`):
+**Cache i decyzje** (w `%APPDATA%\SkyCatalog\`):
 
 - `cache_osm.json` – pobrane dane OSM (odświeżane po 180 dniach, gdy jest internet),
 - `decyzje_lokalizacji.json` – wybory miejscowości i zatwierdzone/odrzucone obiekty,
@@ -232,7 +233,7 @@ GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanyc
 ## Wymagania i zależności
 
 * Windows 10 lub 11.
-* Gotowy program (folder `Sortowanie`) zawiera wszystko – Python nie jest potrzebny.
+* Gotowy program (folder `SkyCatalog_1.01`) zawiera wszystko – Python nie jest potrzebny.
 * Uruchomienie ze źródeł: [Python 3.10+](https://www.python.org/downloads/windows/) oraz
   `requirements.txt`:
   * **PySide6** (Qt 6) – interfejs, QtWebEngine (mapa Leaflet), QtMultimedia (odtwarzacz).
@@ -267,7 +268,7 @@ build.bat
 ```
 
 Skrypt tworzy `.venv`, instaluje zależności, uruchamia testy i buduje folder
-**`dist\Sortowanie\`** z plikiem `Sortowanie.exe`. Aplikacja jest budowana jako folder (nie jeden
+**`dist\SkyCatalog_1.01\`** z plikiem `SkyCatalog_1.01.exe`. Aplikacja jest budowana jako folder (nie jeden
 plik), bo QtWebEngine ma ok. 200 MB i w trybie jednego pliku byłby rozpakowywany przy każdym starcie.
 
 Ręcznie:
@@ -309,7 +310,7 @@ Sortowanie/
 │   ├── geo.py            # miejscowość i obiekty z GPS, cache danych i decyzji
 │   ├── osm.py            # analiza danych OSM: geometria, klasyfikacja, zapytania
 │   ├── overpass.py       # klient Overpass API (kolejka, 429/504, endpoint)
-│   ├── config.py         # ustawienia w %APPDATA%\Sortowanie
+│   ├── config.py         # ustawienia w %APPDATA%\SkyCatalog
 │   └── core.py           # przenoszenie plików, historia, cofanie
 ├── narzedzia/           # sprawdz_lokalizacje.py – diagnostyka na prawdziwych danych
 ├── tests/                # testy jednostkowe (unittest)
@@ -328,8 +329,8 @@ Plik `.gitignore` wyklucza z repozytorium:
 - lokalne dane aplikacji (`ustawienia.json`, `cache_osm.json`, `decyzje_lokalizacji.json`, `historia_sortowania.json`),
 - lokalny indeks materiałów, miniatury i cache mapy (`*.sqlite`, `miniatury/`, `kafelki/`).
 
-Dane programu na komputerze: `%APPDATA%\Sortowanie\` (ustawienia, decyzje, historia, cache OSM)
-oraz `%LOCALAPPDATA%\Sortowanie\` (`katalog.sqlite`, `miniatury\`, `przegladarka\` – cache kafelków).
+Dane programu na komputerze: `%APPDATA%\SkyCatalog\` (ustawienia, decyzje, historia, cache OSM)
+oraz `%LOCALAPPDATA%\SkyCatalog\` (`katalog.sqlite`, `miniatury\`, `przegladarka\` – cache kafelków).
 - cache Pythona i narzędzi (`__pycache__/`, `.pytest_cache/`, …),
 - środowiska wirtualne (`.venv/`),
 - pliki wynikowe budowania (`build/`, `dist/`, `*.exe`).

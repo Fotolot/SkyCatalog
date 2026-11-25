@@ -1,4 +1,4 @@
-"""Ustawienia aplikacji przechowywane lokalnie w %APPDATA%\\Sortowanie."""
+"""Ustawienia aplikacji przechowywane lokalnie w %APPDATA%\\SkyCatalog."""
 
 from __future__ import annotations
 
@@ -40,13 +40,13 @@ DEFAULT_SETTINGS: dict = {
 
 def app_data_dir() -> Path:
     base = os.environ.get("APPDATA") or str(Path.home() / ".config")
-    return Path(base) / "Sortowanie"
+    return Path(base) / "SkyCatalog"
 
 
 def local_data_dir() -> Path:
-    """Dane lokalne tej maszyny (katalog, miniatury, kafelki): %LOCALAPPDATA%\\Sortowanie."""
+    """Dane lokalne tej maszyny (katalog, miniatury, kafelki): %LOCALAPPDATA%\\SkyCatalog."""
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA") or str(Path.home() / ".cache")
-    return Path(base) / "Sortowanie"
+    return Path(base) / "SkyCatalog"
 
 
 def settings_path() -> Path:
