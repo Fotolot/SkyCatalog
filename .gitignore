@@ -55,3 +55,8 @@ historia_sortowania.json
 Thumbs.db
 desktop.ini
 .DS_Store
+
+# Lokalne dane aplikacji (gdyby trafiły do folderu projektu)
+ustawienia.json
+cache_lokalizacji.json
+*.tmp
