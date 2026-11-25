@@ -1,6 +1,6 @@
 <img src="assets/SkyCatalog.png" alt="SkyCatalog" width="96" align="right">
 
-# SkyCatalog 1.01
+# SkyCatalog 1.02
 
 Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki
 (repozytorium nazywa się `Sortowanie`, program – **SkyCatalog**):
@@ -18,12 +18,12 @@ Program jest budowany automatycznie na Windows (GitHub Actions) przy każdej zmi
 
 1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions) i otwórz
    najnowsze zakończone budowanie „Budowanie SkyCatalog (Windows)”.
-2. Na dole strony, w sekcji **Artifacts**, kliknij **SkyCatalog_1.01** (wymaga zalogowania).
-3. Rozpakuj ZIP (wewnątrz jest folder `SkyCatalog_1.01`) i uruchom `SkyCatalog_1.01\SkyCatalog_1.01.exe`.
+2. Na dole strony, w sekcji **Artifacts**, kliknij **SkyCatalog_1.02** (wymaga zalogowania).
+3. Rozpakuj ZIP (wewnątrz jest folder `SkyCatalog_1.02`) i uruchom `SkyCatalog_1.02\SkyCatalog_1.02.exe`.
    Nie trzeba instalować Pythona. Cały folder trzymaj razem – zawiera bibliotekę Qt i przeglądarkę mapy.
 
 Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „Więcej informacji” →
-„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `SkyCatalog_1.01.exe` – zostanie od razu wczytany.
+„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `SkyCatalog_1.02.exe` – zostanie od razu wczytany.
 
 ## Kategorie lotów
 
@@ -259,7 +259,7 @@ GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanyc
 ## Wymagania i zależności
 
 * Windows 10 lub 11.
-* Gotowy program (folder `SkyCatalog_1.01`) zawiera wszystko – Python nie jest potrzebny.
+* Gotowy program (folder `SkyCatalog_1.02`) zawiera wszystko – Python nie jest potrzebny.
 * Uruchomienie ze źródeł: [Python 3.10+](https://www.python.org/downloads/windows/) oraz
   `requirements.txt`:
   * **PySide6** (Qt 6) – interfejs, QtWebEngine (mapa Leaflet), QtMultimedia (odtwarzacz).
@@ -296,7 +296,7 @@ build.bat
 Ikona programu: `assets/SkyCatalog.ico` (plik `.exe`) i `sortowanie/assets/ikona.png` (okno).
 
 Skrypt tworzy `.venv`, instaluje zależności, uruchamia testy i buduje folder
-**`dist\SkyCatalog_1.01\`** z plikiem `SkyCatalog_1.01.exe`. Aplikacja jest budowana jako folder (nie jeden
+**`dist\SkyCatalog_1.02\`** z plikiem `SkyCatalog_1.02.exe`. Aplikacja jest budowana jako folder (nie jeden
 plik), bo QtWebEngine ma ok. 200 MB i w trybie jednego pliku byłby rozpakowywany przy każdym starcie.
 
 Ręcznie:

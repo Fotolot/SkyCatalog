@@ -1,5 +1,5 @@
 @echo off
-REM Buduje dist\SkyCatalog_1.01\SkyCatalog_1.01.exe. Uruchom z folderu projektu: build.bat
+REM Buduje dist\SkyCatalog_1.02\SkyCatalog_1.02.exe. Uruchom z folderu projektu: build.bat
 setlocal
 cd /d "%~dp0"
 
@@ -19,7 +19,7 @@ echo [4/4] Budowanie pliku .exe ...
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm sortowanie.spec || goto :error
 
 echo.
-echo Gotowe: %cd%\dist\SkyCatalog_1.01\SkyCatalog_1.01.exe
+echo Gotowe: %cd%\dist\SkyCatalog_1.02\SkyCatalog_1.02.exe
 exit /b 0
 
 :error
