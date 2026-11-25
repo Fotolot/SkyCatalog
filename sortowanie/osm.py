@@ -265,6 +265,21 @@ class TownResult:
     areas: list[AreaInfo] = field(default_factory=list)
     nodes: list[PlaceNode] = field(default_factory=list)
 
+    def __post_init__(self) -> None:
+        # Ta sama miejscowość bywa w OSM kilkoma obszarami (np. miasto, gmina miejska i powiat
+        # grodzki o jednej nazwie) – na liście wyboru występuje tylko raz. Jeśli wszystkie
+        # propozycje to ta sama nazwa, nie ma czego wybierać: to jest miejscowość.
+        unique: list[str] = []
+        for c in self.candidates:
+            c = (c or "").strip()
+            if c and c.casefold() not in {u.casefold() for u in unique}:
+                unique.append(c)
+        if self.town is None and len(unique) == 1 and len(self.candidates) > 1:
+            self.town = unique[0]
+            self.reason = f"{self.reason}; wszystkie propozycje to ta sama miejscowość".lstrip("; ")
+            unique = []
+        self.candidates = unique
+
     @property
     def ambiguous(self) -> bool:
         return self.town is None and len(self.candidates) > 0
