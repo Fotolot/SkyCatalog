@@ -174,9 +174,19 @@ class MapTab(QWidget):
         split.setStretchFactor(1, 3)
         split.setStretchFactor(2, 1)
         split.setSizes([330, 820, 360])
+        self._split = split
+        self._sized = False
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.addWidget(split)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        if not self._sized and self.width() > 200:
+            # proporcje paneli zależne od szerokości okna (także ekrany 1024 px)
+            w = self._split.width()
+            self._split.setSizes([int(w * 0.24), int(w * 0.50), w - int(w * 0.24) - int(w * 0.50)])
+            self._sized = True
 
     def _make_list(self) -> QTreeWidget:
         t = QTreeWidget(self)

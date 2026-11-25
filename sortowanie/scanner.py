@@ -97,9 +97,13 @@ def default_excluded_paths() -> list[str]:
         v = os.environ.get(var)
         if v:
             paths.append(v)
-    local = os.environ.get("LOCALAPPDATA")
-    if local:
-        paths.append(str(Path(local).parent))          # cały AppData (cache przeglądarek, programów)
+    for var in ("LOCALAPPDATA", "APPDATA"):
+        v = os.environ.get(var)
+        if not v:
+            continue
+        parent = Path(v).parent
+        # cały AppData (cache przeglądarek, programów) – tylko gdy to naprawdę folder AppData
+        paths.append(str(parent) if parent.name.casefold() == "appdata" else v)
     paths.append(str(local_data_dir()))
     return paths
 

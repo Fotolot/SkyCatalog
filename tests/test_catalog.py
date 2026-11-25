@@ -360,3 +360,14 @@ class PickTests(CatalogTestBase):
         only_photos = self.cat.pick(cat.Filters(videos=False), 50.0, 22.0, 10)
         self.assertEqual({h["name"] for h in only_photos}, {"a.JPG", "b.JPG"})
         self.assertEqual(self.cat.pick(cat.Filters(), 51.0, 23.0, 10), [])
+
+
+class ExclusionDefaultsTests(unittest.TestCase):
+    def test_appdata_parent_only_when_named_appdata(self):
+        from sortowanie import scanner
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": r"/x/AppData/Local", "APPDATA": r"/x/AppData/Roaming"}):
+            self.assertIn(str(Path("/x/AppData")), scanner.default_excluded_paths())
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": "/tmp/runner/local", "APPDATA": "/tmp/runner/appdata"}):
+            paths = scanner.default_excluded_paths()
+            self.assertNotIn(str(Path("/tmp/runner")), paths)
+            self.assertIn("/tmp/runner/local", paths)
