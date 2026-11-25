@@ -425,7 +425,7 @@ class PreviewPanel(QWidget):
             self._row("Kategoria", cat.CATEGORY_LABELS.get(m["category"], m["category"]))
         self._row("Miejscowość / lokalizacja", m.get("town"))
         self._row("Wydarzenie / zlecenie", " ".join(x for x in (m.get("event_date"), m.get("event_name")) if x))
-        self._row("Obiekt", meta.get("obiekt"))
+        self._row("Nazwa miejsca", meta.get("obiekt"))
         self._row("Status", m["status"])
         self._row("Błąd odczytu", m.get("error"))
         self._row("Uwaga", meta.get("uwaga"))

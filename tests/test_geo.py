@@ -10,15 +10,14 @@ from pathlib import Path
 
 from sortowanie import geo, overpass
 from sortowanie.config import Settings
-from tests.test_osm import LAT, LON, node, rel, square, way
+from tests.test_osm import LAT, LON, rel, square, way
 
 
 class FakeServer:
     """Odpowiada na zapytania Overpass na podstawie treści zapytania."""
 
-    def __init__(self, area_data=None, poi_data=None, script=None):
+    def __init__(self, area_data=None, script=None):
         self.area_data = area_data or {"elements": []}
-        self.poi_data = poi_data or {"elements": []}
         self.script = list(script or [])   # kolejne kody HTTP do zwrócenia przed sukcesem
         self.requests = []
         self.fail = False
@@ -34,8 +33,7 @@ class FakeServer:
         self.requests.append(("query", ql))
         if self.script:
             return self.script.pop(0), b"<html>busy</html>"
-        payload = self.area_data if "is_in(" in ql else self.poi_data
-        return 200, json.dumps(payload).encode()
+        return 200, json.dumps(self.area_data).encode()
 
     @property
     def queries(self):
@@ -46,10 +44,6 @@ AREA = {"elements": [
     rel(1, {"name": "Miasto A", "place": "city", "boundary": "administrative", "admin_level": "6"},
         square(LAT, LON, 0.05)),
     {"type": "relation", "id": 2, "tags": {"name": "gmina Testowo", "boundary": "administrative", "admin_level": "7"}},
-]}
-POI = {"elements": [
-    way(10, {"name": "Pomnik X", "historic": "memorial"}, square(LAT + 0.0012, LON, 0.0001)),
-    node(11, LAT + 0.0015, LON + 0.0005, {"name": "Muzeum Y", "tourism": "museum"}),
 ]}
 
 
@@ -71,11 +65,6 @@ class ServiceTests(unittest.TestCase):
         return geo.LocationService(self.settings, geo.OsmCache(self.root / "cache.json"),
                                    geo.DecisionStore(self.root / "dec.json"), client)
 
-    def objects(self, svc, points):
-        out = {}
-        svc.objects(points, lambda k, c, s, e, r: out.__setitem__(k, (c, s, e, r)))
-        return out
-
     def test_town_then_points_in_polygon_use_cache(self):
         server = FakeServer(AREA)
         svc = self.service(server)
@@ -85,25 +74,16 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual((r2.town, src2), ("Miasto A", geo.SOURCE_CACHE))
         self.assertEqual(len(server.queries), 1)
 
-    def test_objects_fetched_once_for_many_points(self):
-        server = FakeServer(AREA, POI)
-        svc = self.service(server)
-        pts = [("a", LAT, LON), ("b", LAT + 0.0003, LON + 0.0002), ("c", LAT + 0.0005, LON)]
-        out = self.objects(svc, pts)
-        self.assertEqual(len(server.queries), 1)
-        self.assertEqual(out["a"][0][0].name, "Pomnik X")
-        # Drugi raz – całość z cache, bez zapytań
-        out2 = self.objects(svc, pts)
-        self.assertEqual(len(server.queries), 1)
-        self.assertEqual(out2["b"][0][0].name, "Pomnik X")
-
-    def test_only_coordinates_sent(self):
-        server = FakeServer(AREA, POI)
+    def test_only_coordinates_sent_and_no_object_search(self):
+        server = FakeServer(AREA)
         svc = self.service(server)
         svc.town(LAT, LON)
-        self.objects(svc, [("DJI_0001", LAT, LON)])
+        self.assertFalse(hasattr(svc, "objects"))
+        self.assertEqual(len(server.queries), 1)
         for q in server.queries:
+            self.assertIn("is_in(", q)            # wyłącznie rozpoznanie miejscowości
             self.assertNotIn("DJI", q)
+            self.assertNotIn("nwr[", q)           # żadnych zapytań o obiekty w okolicy
 
     def test_429_waits_per_status_and_retries(self):
         server = FakeServer(AREA, script=[429])
@@ -127,17 +107,14 @@ class ServiceTests(unittest.TestCase):
         self.assertIsNone(r.town)
         self.assertIn("504", err)
 
-    def test_offline_uses_cache_and_decisions(self):
-        svc = self.service(FakeServer(AREA, POI))
+    def test_offline_uses_cache(self):
+        svc = self.service(FakeServer(AREA))
         svc.town(LAT, LON)
-        self.objects(svc, [("a", LAT, LON)])
         dead = FakeServer()
         dead.fail = True
         svc2 = self.service(dead)
         r, src, _ = svc2.town(LAT, LON)
         self.assertEqual(r.town, "Miasto A")
-        out = self.objects(svc2, [("a", LAT, LON)])
-        self.assertEqual(out["a"][0][0].name, "Pomnik X")
         self.assertEqual(dead.requests, [])
 
     def test_no_data_offline(self):
@@ -147,8 +124,6 @@ class ServiceTests(unittest.TestCase):
         r, src, err = svc.town(LAT, LON)
         self.assertIsNone(r.town)
         self.assertTrue(err)
-        out = self.objects(svc, [("a", LAT, LON)])
-        self.assertEqual(out["a"][1], geo.SOURCE_NONE)
         self.assertTrue(svc.network_down)
 
     def test_offline_setting_blocks_network(self):
@@ -168,13 +143,23 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(r2.town, "Wieś G")
         self.assertEqual(src, geo.SOURCE_DECISION)
 
-    def test_object_decision_remembered(self):
-        svc = self.service(FakeServer(AREA, POI))
-        out = self.objects(svc, [("a", LAT, LON)])
-        cands = out["a"][0]
-        svc.decisions.remember_object(LAT, LON, [c.osm_id for c in cands], "")
-        out2 = self.objects(svc, [("a", LAT, LON)])
-        self.assertEqual(out2["a"][3], "")
+    def test_old_object_data_in_user_files_is_kept(self):
+        """Pliki użytkownika ze starszej wersji (kafelki i decyzje obiektów) nie są czyszczone."""
+        cache_file, dec_file = self.root / "cache.json", self.root / "dec.json"
+        cache_file.write_text(json.dumps({"version": 1, "town_areas": {}, "points": [],
+                                          "tiles": {"1,2": {"t": 1, "ids": []}}, "elements": {"w1": {}}}),
+                              encoding="utf-8")
+        dec_file.write_text(json.dumps({"towns": {}, "objects": {"x": "w1"}}), encoding="utf-8")
+        svc = self.service(FakeServer(AREA))
+        svc.town(LAT, LON)                                   # zapisuje cache
+        svc.decisions.remember_town(LAT, LON, ["A", "B"], "A")  # zapisuje decyzje
+        cache = json.loads(cache_file.read_text(encoding="utf-8"))
+        self.assertIn("1,2", cache["tiles"])
+        self.assertEqual(len(cache["points"]), 1)
+        dec = json.loads(dec_file.read_text(encoding="utf-8"))
+        self.assertEqual(dec["objects"], {"x": "w1"})
+        self.assertEqual(len(svc.decisions), 1)
+        self.assertNotIn("kafelk", svc.cache.summary())
 
     def test_endpoint_from_env(self):
         os.environ[overpass.ENV_ENDPOINT] = "https://moj-serwer.example/api/interpreter"

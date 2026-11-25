@@ -11,8 +11,6 @@ DEFAULT_SETTINGS: dict = {
     # Endpoint Overpass API – można wskazać własny serwer (bez zmiany kodu).
     # Zmienna środowiskowa SORTOWANIE_OVERPASS_URL ma pierwszeństwo.
     "overpass_url": "https://overpass-api.de/api/interpreter",
-    # Promień wyszukiwania obiektów wokół GPS materiału (metry)
-    "poi_radius_m": 250,
     # Opcjonalny kontakt dołączany do nagłówka User-Agent. Domyślnie pusty.
     "contact_email": "",
     # Tryb offline: tylko zapisane dane i decyzje, bez zapytań do internetu

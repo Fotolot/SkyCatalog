@@ -13,7 +13,7 @@ https://operations.osmfoundation.org/policies/tiles/ – najważniejsze punkty:
 * ZAKAZ pobierania masowego, wstępnego ładowania i trybu offline – pobierane są
   wyłącznie kafelki aktualnie oglądanego widoku; nie ma funkcji „pobierz obszar”.
 
-Overpass API NIE służy do rysowania mapy – tylko do wyszukiwania obiektów (geo.py).
+Overpass API NIE służy do rysowania mapy – tylko do rozpoznawania miejscowości (geo.py).
 """
 
 from __future__ import annotations

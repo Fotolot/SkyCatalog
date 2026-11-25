@@ -1,8 +1,9 @@
 name: Budowanie i wydanie SkyCatalog (Windows)
 
 # Każdy push do main (oraz ręczne uruchomienie na main) tworzy wydanie GitHub Release
-# z wersją MAJOR.MINOR (plik VERSION) + numer budowania, np. v1.1.15.
-# Push na inne gałęzie tylko buduje i testuje (artefakt do pobrania, bez wydania).
+# z wersją MAJOR.MINOR (plik VERSION) + kolejny numer poprawki z tagów, np. v1.2.1, v1.2.2…
+# Push na inne gałęzie tylko buduje i testuje (artefakt do pobrania, bez wydania) – z numerem,
+# który dostałoby następne wydanie.
 on:
   push:
     branches: ["**"]
@@ -16,6 +17,11 @@ on:
 permissions:
   contents: write
 
+# Wydania z main jedno po drugim – dwa szybkie pushe nie dostaną tego samego numeru
+concurrency:
+  group: ${{ github.ref == 'refs/heads/main' && 'wydanie-main' || github.run_id }}
+  cancel-in-progress: false
+
 env:
   PYTHONIOENCODING: utf-8
 
@@ -24,15 +30,18 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # tagi wydań – do wyliczenia kolejnego numeru wersji
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Wersja (MAJOR.MINOR z pliku VERSION + numer budowania)
+      - name: Wersja (MAJOR.MINOR z pliku VERSION + kolejny numer poprawki)
         shell: pwsh
         run: |
-          $version = python narzedzia/wersja.py --build ${{ github.run_number }}
+          git fetch --tags --force --quiet
+          $version = python narzedzia/wersja.py --z-tagow
           "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "Wersja: $version"
 

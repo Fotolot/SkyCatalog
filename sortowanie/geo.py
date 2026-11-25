@@ -1,28 +1,26 @@
-"""Rozpoznawanie miejscowości i obiektów z GPS na podstawie OpenStreetMap (Overpass API).
+"""Rozpoznawanie miejscowości z GPS na podstawie OpenStreetMap (Overpass API).
 
-- Do serwera wysyłane są WYŁĄCZNIE współrzędne / prostokąty – nigdy pliki.
+- Do serwera wysyłane są WYŁĄCZNIE współrzędne – nigdy pliki.
 - Miejscowość: obszary OSM obejmujące punkt (``is_in``) i analiza ich tagów.
   Wielokąty miejscowości trafiają do cache, więc kolejne punkty w ich granicach
   są rozpoznawane lokalnie, bez zapytania.
-- Obiekty: kafelki ~1,1 × 0,7 km pobierane raz (z geometrią) dla wszystkich
-  materiałów, których promień je obejmuje; odległość liczona do granic obiektów.
-- Decyzje użytkownika (wybór miejscowości, zatwierdzenie/odrzucenie obiektu) są
-  zapamiętywane osobno i podpowiadane przy kolejnych importach z tego miejsca.
+- Program NIE wyszukuje pobliskich obiektów i nie zgaduje, co sfotografowano –
+  nazwę miejsca (opcjonalną) wpisuje użytkownik.
+- Wybór miejscowości przy niejednoznacznym wyniku jest zapamiętywany osobno
+  i podpowiadany przy kolejnych importach z tego miejsca.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Iterable
 
 from . import osm
 from .config import Settings, app_data_dir, atomic_write_json
-from .osm import PoiCandidate, Shape, TownResult, haversine_m
+from .osm import Shape, TownResult, haversine_m
 from .overpass import OverpassClient, OverpassError, OverpassUnavailable
 
 SOURCE_ONLINE = "OSM"
@@ -31,8 +29,6 @@ SOURCE_CACHE_NEAR = "cache (pobliski)"
 SOURCE_DECISION = "zapamiętany wybór"
 SOURCE_NONE = "brak"
 
-TILE_DEG = 0.01            # bok kafelka obiektów (stopnie)
-TILES_PER_QUERY = 6        # ile kafelków w jednym zapytaniu (małe zapytania łatwiej przechodzą)
 POINT_REUSE_M = 150        # ponowne użycie wyniku „bez obszaru” dla bliskich punktów
 NEAR_FALLBACK_M = 1000     # offline: najbliższy zapisany wynik
 
@@ -47,34 +43,10 @@ class Place:
     town_source: str = SOURCE_NONE
     town_decided: bool = False          # miejscowość wybrana przez użytkownika
     error: str = ""
-    objects: list[PoiCandidate] = field(default_factory=list)
-    object_checked: bool = False        # wyszukiwanie obiektów wykonane
-    object_failed: bool = False         # nie sprawdzono (brak danych offline)
-    object_choice: str | None = None    # None = czeka na decyzję, "" = bez obiektu, inaczej osm_id
-    object_choice_source: str = ""      # "użytkownik" / "zapamiętany wybór"
 
     @property
     def ambiguous(self) -> bool:
         return self.town is None and bool(self.town_candidates)
-
-    @property
-    def proposed_object(self) -> PoiCandidate | None:
-        return self.objects[0] if self.objects else None
-
-    @property
-    def chosen_object(self) -> PoiCandidate | None:
-        if not self.object_choice:
-            return None
-        return next((o for o in self.objects if o.osm_id == self.object_choice), None)
-
-    @property
-    def object_name(self) -> str | None:
-        chosen = self.chosen_object
-        return chosen.name if chosen else None
-
-    @property
-    def needs_object_decision(self) -> bool:
-        return bool(self.town) and bool(self.objects) and self.object_choice is None
 
 
 # ── Cache danych OSM ───────────────────────────────────────────
@@ -87,33 +59,11 @@ def decisions_path() -> Path:
     return app_data_dir() / "decyzje_lokalizacji.json"
 
 
-def tile_key(ix: int, iy: int) -> str:
-    return f"{ix},{iy}"
-
-
-def tile_bbox(ix: int, iy: int) -> tuple[float, float, float, float]:
-    return (round(iy * TILE_DEG, 6), round(ix * TILE_DEG, 6),
-            round((iy + 1) * TILE_DEG, 6), round((ix + 1) * TILE_DEG, 6))
-
-
-def tiles_for_radius(lat: float, lon: float, radius_m: float) -> list[tuple[int, int]]:
-    dlat = radius_m / 111_320
-    dlon = radius_m / (111_320 * max(0.1, math.cos(math.radians(lat))))
-    x0, x1 = math.floor((lon - dlon) / TILE_DEG), math.floor((lon + dlon) / TILE_DEG)
-    y0, y1 = math.floor((lat - dlat) / TILE_DEG), math.floor((lat + dlat) / TILE_DEG)
-    return [(x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
-
-
-_KEEP_TAG_KEYS = {"name", "name:pl", "place", "boundary", "admin_level", "border_type", "type",
-                  "wikidata", "wikipedia"} | {k for k, _v, _l in osm.POI_RULES}
-
-
-def _slim_tags(tags: dict) -> dict:
-    return {k: v for k, v in tags.items() if k in _KEEP_TAG_KEYS}
-
-
 class OsmCache:
-    """Lokalny cache: wielokąty miejscowości, wyniki dla punktów i kafelki obiektów."""
+    """Lokalny cache: wielokąty miejscowości i wyniki dla punktów.
+
+    Starsze wersje zapisywały tu także kafelki obiektów („tiles”, „elements”) – nie są już
+    używane, ale nie są też usuwane z pliku użytkownika (znikną po „Wyczyść cache”)."""
 
     VERSION = 1
 
@@ -131,7 +81,7 @@ class OsmCache:
 
     @classmethod
     def _empty(cls) -> dict:
-        return {"version": cls.VERSION, "town_areas": {}, "points": [], "tiles": {}, "elements": {}}
+        return {"version": cls.VERSION, "town_areas": {}, "points": []}
 
     def save(self) -> None:
         with self._lock:
@@ -153,8 +103,7 @@ class OsmCache:
     def summary(self) -> str:
         with self._lock:
             d = self.data
-            return (f"miejscowości: {len(d['town_areas'])}, punktów: {len(d['points'])}, "
-                    f"kafelków obiektów: {len(d['tiles'])}")
+            return f"miejscowości: {len(d['town_areas'])}, punktów: {len(d['points'])}"
 
     # Miejscowości
     def add_town_area(self, area: osm.AreaInfo, town: str, why: str) -> None:
@@ -196,54 +145,11 @@ class OsmCache:
                     best, best_d = p, d
         return (TownResult.from_json(best["r"]), best_d) if best else None
 
-    # Kafelki obiektów
-    def tile_fresh(self, key: str, max_age_days: float | None) -> bool:
-        with self._lock:
-            t = self.data["tiles"].get(key)
-        if t is None:
-            return False
-        return max_age_days is None or time.time() - t["t"] <= max_age_days * 86400
-
-    def store_tiles(self, keys: list[str], elements: list[dict],
-                    bboxes: dict[str, tuple[float, float, float, float]]) -> None:
-        with self._lock:
-            ids_by_tile: dict[str, list[str]] = {k: [] for k in keys}
-            for el in elements:
-                eid = osm.element_id(el)
-                shape = osm.shape_from_element(el)
-                self.data["elements"][eid] = {"type": el.get("type"), "tags": _slim_tags(el.get("tags") or {}),
-                                              "shape": shape.to_json()}
-                self._shapes[eid] = shape
-                b = shape.bbox
-                for k in keys:
-                    s, w, n, e = bboxes[k]
-                    if b is None or not (b[2] < s or b[0] > n or b[3] < w or b[1] > e):
-                        ids_by_tile[k].append(eid)
-            for k in keys:
-                self.data["tiles"][k] = {"t": time.time(), "ids": ids_by_tile[k]}
-
-    def elements_for_tiles(self, keys: Iterable[str]) -> tuple[list[dict], dict[str, Shape]]:
-        elements, shapes, seen = [], {}, set()
-        with self._lock:
-            for k in keys:
-                for eid in self.data["tiles"].get(k, {}).get("ids", []):
-                    if eid in seen or eid not in self.data["elements"]:
-                        continue
-                    seen.add(eid)
-                    e = self.data["elements"][eid]
-                    shape = self._shapes.get(eid)
-                    if shape is None:
-                        shape = self._shapes[eid] = Shape.from_json(e["shape"])
-                    shapes[eid] = shape
-                    elements.append({"type": e["type"], "id": eid[1:], "tags": e["tags"]})
-        # element_id() składa id z pierwszej litery typu – odtwarzamy zgodny format
-        for el in elements:
-            el["id"] = int(el["id"]) if str(el["id"]).isdigit() else el["id"]
-        return elements, shapes
-
 
 class DecisionStore:
-    """Decyzje użytkownika – nie są usuwane przy czyszczeniu cache danych OSM."""
+    """Wybory miejscowości – nie są usuwane przy czyszczeniu cache danych OSM.
+
+    Sekcja „objects” ze starszych wersji jest wczytywana i zapisywana bez zmian (nieużywana)."""
 
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or decisions_path()
@@ -266,10 +172,6 @@ class DecisionStore:
     def _town_key(lat: float, lon: float, candidates: list[str]) -> str:
         return f"{lat:.2f},{lon:.2f}|" + "|".join(sorted(c.casefold() for c in candidates))
 
-    @staticmethod
-    def _object_key(lat: float, lon: float, ids: list[str]) -> str:
-        return f"{lat:.3f},{lon:.3f}|" + "|".join(sorted(ids))
-
     def town_choice(self, lat: float, lon: float, candidates: list[str]) -> str | None:
         with self._lock:
             return self.data["towns"].get(self._town_key(lat, lon, candidates))
@@ -277,15 +179,6 @@ class DecisionStore:
     def remember_town(self, lat: float, lon: float, candidates: list[str], choice: str) -> None:
         with self._lock:
             self.data["towns"][self._town_key(lat, lon, candidates)] = choice
-            self._save()
-
-    def object_choice(self, lat: float, lon: float, ids: list[str]) -> str | None:
-        with self._lock:
-            return self.data["objects"].get(self._object_key(lat, lon, ids))
-
-    def remember_object(self, lat: float, lon: float, ids: list[str], choice: str) -> None:
-        with self._lock:
-            self.data["objects"][self._object_key(lat, lon, ids)] = choice
             self._save()
 
     def clear(self) -> None:
@@ -298,13 +191,10 @@ class DecisionStore:
 
     def __len__(self) -> int:
         with self._lock:
-            return len(self.data["towns"]) + len(self.data["objects"])
+            return len(self.data["towns"])
 
 
 # ── Usługa lokalizacji ─────────────────────────────────────────
-
-Point = tuple[str, float, float]   # (klucz grupy, lat, lon)
-
 
 class LocationService:
     def __init__(self, settings: Settings, cache: OsmCache | None = None,
@@ -385,56 +275,3 @@ class LocationService:
             result, decided = self._apply_town_decision(lat, lon, near[0])
             return result, SOURCE_DECISION if decided else SOURCE_CACHE_NEAR, error
         return TownResult(None, [], "brak danych"), SOURCE_NONE, error or "Brak zapisanych danych offline"
-
-    # Obiekty
-    def objects(self, points: list[Point],
-                on_result: Callable[[str, list[PoiCandidate], str, str, str | None], None]) -> None:
-        """Wyszukuje obiekty dla wielu punktów naraz. Pobiera tylko brakujące kafelki.
-
-        on_result(klucz, kandydaci, źródło, błąd, zapamiętana_decyzja)
-        """
-        radius = float(self.settings.get("poi_radius_m") or 250)
-        max_age = self._max_age()
-        needed: dict[str, list[str]] = {}
-        missing: list[tuple[int, int]] = []
-        for key, lat, lon in points:
-            tiles = tiles_for_radius(lat, lon, radius)
-            needed[key] = [tile_key(*t) for t in tiles]
-            for t in tiles:
-                if not self.cache.tile_fresh(tile_key(*t), max_age) and t not in missing:
-                    missing.append(t)
-
-        error, fetched_ok = "", True
-        if missing and self._online():
-            for i in range(0, len(missing), TILES_PER_QUERY):
-                chunk = missing[i:i + TILES_PER_QUERY]
-                keys = [tile_key(*t) for t in chunk]
-                bboxes = {tile_key(*t): tile_bbox(*t) for t in chunk}
-                try:
-                    data = self.client.query(osm.poi_query(list(bboxes.values())),
-                                             f"obiekty ({len(chunk)} kafelków)")
-                    self.cache.store_tiles(keys, data.get("elements", []), bboxes)
-                    self.cache.save()
-                except OverpassUnavailable as exc:
-                    self._network_down = True
-                    error, fetched_ok = f"Brak połączenia z Overpass: {exc}", False
-                    break
-                except OverpassError as exc:
-                    error, fetched_ok = str(exc), False
-                    break
-        elif missing:
-            fetched_ok = False
-            error = "Tryb offline" if self.settings.get("offline") else "Brak połączenia z Overpass"
-
-        for key, lat, lon in points:
-            keys = needed[key]
-            have_all = all(self.cache.tile_fresh(k, None) for k in keys)
-            if not have_all:
-                on_result(key, [], SOURCE_NONE, error or "Brak danych", None)
-                continue
-            elements, shapes = self.cache.elements_for_tiles(keys)
-            cands = osm.rank_pois(elements, shapes, lat, lon, radius, self.language)
-            fresh = all(self.cache.tile_fresh(k, max_age) for k in keys)
-            source = SOURCE_ONLINE if fresh and fetched_ok else SOURCE_CACHE
-            remembered = self.decisions.object_choice(lat, lon, [c.osm_id for c in cands]) if cands else None
-            on_result(key, cands, source, "", remembered)

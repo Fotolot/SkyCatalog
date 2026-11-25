@@ -5,17 +5,12 @@ from pathlib import Path
 
 from sortowanie import planner as pl
 from sortowanie.geo import Place
-from sortowanie.osm import PoiCandidate
-
-
-def place(town, obj=None, decision="accept", checked=True):
-    """Place z rozpoznaną miejscowością; obiekt domyślnie zatwierdzony przez użytkownika."""
-    p = Place(town=town, object_checked=checked)
-    if obj:
-        p.objects = [PoiCandidate(f"w{abs(hash(obj)) % 1000}", obj, "zabytek", 0, 40.0)]
-        p.object_choice = {"accept": p.objects[0].osm_id, "reject": "", "pending": None}[decision]
-    return p
 from sortowanie.media import KIND_PHOTO, KIND_VIDEO, MediaGroup
+
+
+def place(town):
+    """Place z miejscowością rozpoznaną z GPS."""
+    return Place(town=town)
 
 
 def group(key, kind=KIND_VIDEO, gps=(50.0, 22.0), captured=None, files=None, root=Path("/karta")):
@@ -33,92 +28,96 @@ class PlannerTests(unittest.TestCase):
         self._tmp.cleanup()
 
     # Hobby
-    def test_hobby_with_object(self):
-        g = group("DJI_0001")
+    def test_hobby_default_structure_without_place_name(self):
         a = pl.Assignment(pl.CATEGORY_HOBBY)
-        p = place("Rzeszów", "Pomnik Czynu Rewolucyjnego")
-        self.assertEqual(pl.relative_dir(g, a, p),
+        p = place("Rzeszów")
+        self.assertEqual(pl.relative_dir(group("A"), a, p), Path("Hobby", "Rzeszów", "WIDEO"))
+        self.assertEqual(pl.relative_dir(group("B", KIND_PHOTO), a, p), Path("Hobby", "Rzeszów", "Zdjęcia"))
+
+    def test_hobby_with_place_name(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name="Pomnik")
+        p = place("Rzeszów")
+        self.assertEqual(pl.relative_dir(group("A"), a, p), Path("Hobby", "Rzeszów", "Pomnik", "WIDEO"))
+        self.assertEqual(pl.relative_dir(group("B", KIND_PHOTO), a, p), Path("Hobby", "Rzeszów", "Pomnik", "Zdjęcia"))
+        a.name = "Pomnik Czynu Rewolucyjnego"
+        self.assertEqual(pl.relative_dir(group("A"), a, p),
                          Path("Hobby", "Rzeszów", "Pomnik Czynu Rewolucyjnego", "WIDEO"))
-        photo = group("DJI_0002", KIND_PHOTO)
-        self.assertEqual(pl.relative_dir(photo, a, p),
-                         Path("Hobby", "Rzeszów", "Pomnik Czynu Rewolucyjnego", "Zdjęcia"))
 
-    def test_hobby_without_object_skips_level(self):
-        a = pl.Assignment(pl.CATEGORY_HOBBY)
+    def test_hobby_blank_place_name_means_town_folder(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name="   ")
+        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")), Path("Hobby/Rzeszów/WIDEO"))
+
+    def test_hobby_place_name_is_sanitized(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name='Most "Zamkowy"/kładka?')
         self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")),
-                         Path("Hobby", "Rzeszów", "WIDEO"))
+                         Path("Hobby/Rzeszów/Most -Zamkowy--kładka-/WIDEO"))
+        a.name = " ... "
+        plan = pl.build_plan([group("A")], {"A": a}, {"A": place("Rzeszów")}, self.arch)
+        self.assertTrue(any("nazwa miejsca" in e for e in plan.errors))
 
-    def test_hobby_groups_split_by_gps(self):
-        a = pl.Assignment(pl.CATEGORY_HOBBY)
-        g1, g2 = group("A"), group("B")
-        places = {"A": place("Rzeszów", "Zamek"),
-                  "B": place("Łańcut")}
-        plan = pl.build_plan([g1, g2], {"A": a, "B": a}, places, self.arch)
-        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/Zamek/WIDEO"))
-        self.assertEqual(plan.group_dirs["B"], Path("Hobby/Łańcut/WIDEO"))
+    def test_hobby_name_applies_to_whole_assignment_towns_from_gps(self):
+        """Jedna nazwa dla całej zaznaczonej grupy; miejscowość nadal z GPS każdej grupy."""
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name="Zalew")
+        places = {"A": place("Rzeszów"), "B": place("Rzeszów"), "C": place("Łańcut")}
+        groups = [group("A"), group("B", KIND_PHOTO), group("C")]
+        plan = pl.build_plan(groups, {g.key: a for g in groups}, places, self.arch)
         self.assertTrue(plan.ready, plan.errors)
+        self.assertEqual(plan.group_dirs, {"A": Path("Hobby/Rzeszów/Zalew/WIDEO"),
+                                           "B": Path("Hobby/Rzeszów/Zalew/Zdjęcia"),
+                                           "C": Path("Hobby/Łańcut/Zalew/WIDEO")})
+
+    def test_hobby_split_groups_get_different_names(self):
+        a1 = pl.Assignment(pl.CATEGORY_HOBBY, name="Pomnik")
+        a2 = pl.Assignment(pl.CATEGORY_HOBBY, name="Bulwary")
+        a3 = pl.Assignment(pl.CATEGORY_HOBBY)
+        places = {k: place("Rzeszów") for k in "ABC"}
+        plan = pl.build_plan([group("A"), group("B"), group("C", KIND_PHOTO)], {"A": a1, "B": a2, "C": a3},
+                             places, self.arch)
+        self.assertTrue(plan.ready, plan.errors)
+        self.assertEqual(plan.group_dirs, {"A": Path("Hobby/Rzeszów/Pomnik/WIDEO"),
+                                           "B": Path("Hobby/Rzeszów/Bulwary/WIDEO"),
+                                           "C": Path("Hobby/Rzeszów/Zdjęcia")})
 
     def test_hobby_without_gps_requires_manual_town(self):
         g = group("A", gps=None)
-        a = pl.Assignment(pl.CATEGORY_HOBBY)
+        a = pl.Assignment(pl.CATEGORY_HOBBY, name="Zalew")
         plan = pl.build_plan([g], {"A": a}, {}, self.arch)
         self.assertFalse(plan.ready)
         self.assertTrue(any("miejscowości" in e for e in plan.errors))
         a.place = "Tyczyn"
         plan = pl.build_plan([g], {"A": a}, {}, self.arch)
         self.assertTrue(plan.ready, plan.errors)
-        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Tyczyn/WIDEO"))
+        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Tyczyn/Zalew/WIDEO"))
+
+    def test_hobby_manual_town_does_not_override_gps(self):
+        a = pl.Assignment(pl.CATEGORY_HOBBY, place="Tyczyn")
+        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")), Path("Hobby/Rzeszów/WIDEO"))
 
     def test_hobby_pending_blocks(self):
         g = group("A")
         plan = pl.build_plan([g], {"A": pl.Assignment(pl.CATEGORY_HOBBY)}, {}, self.arch)
         self.assertTrue(any("trwa rozpoznawanie" in e for e in plan.errors))
-
-    def test_hobby_waits_for_object_lookup(self):
-        g = group("A")
-        a = pl.Assignment(pl.CATEGORY_HOBBY)
-        plan = pl.build_plan([g], {"A": a}, {"A": place("Rzeszów", checked=False)}, self.arch)
-        self.assertTrue(any("trwa rozpoznawanie" in e for e in plan.errors))
-        plan = pl.build_plan([g], {"A": a}, {"A": place("Rzeszów")}, self.arch)
+        plan = pl.build_plan([g], {"A": pl.Assignment(pl.CATEGORY_HOBBY)}, {"A": place("Rzeszów")}, self.arch)
         self.assertTrue(plan.ready, plan.errors)
 
-    def test_hobby_manual_object_only_when_not_recognized(self):
-        a = pl.Assignment(pl.CATEGORY_HOBBY, name="Zalew")
-        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów")),
-                         Path("Hobby/Rzeszów/Zalew/WIDEO"))
-        self.assertEqual(pl.relative_dir(group("A"), a, place("Rzeszów", "Zamek")),
-                         Path("Hobby/Rzeszów/Zamek/WIDEO"))
-        a.place = "Tyczyn"
-        self.assertEqual(pl.relative_dir(group("B", gps=None), a, None), Path("Hobby/Tyczyn/Zalew/WIDEO"))
-
-    def test_hobby_object_requires_approval(self):
-        a = pl.Assignment(pl.CATEGORY_HOBBY)
-        p = place("Rzeszów", "Zamek", decision="pending")
-        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
-        self.assertFalse(plan.ready)
-        self.assertTrue(any("zatwierdź albo odrzuć" in e for e in plan.errors))
-        p.object_choice = ""   # odrzucony – bez poziomu obiektu
-        plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
-        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Rzeszów/WIDEO"))
-
     def test_hobby_ambiguous_town_requires_choice(self):
-        a = pl.Assignment(pl.CATEGORY_HOBBY, place="Ręczna")
-        p = Place(town=None, town_candidates=["Wieś G", "Przysiółek H"], object_checked=True)
+        a = pl.Assignment(pl.CATEGORY_HOBBY, place="Ręczna", name="Kapliczka")
+        p = Place(town=None, town_candidates=["Wieś G", "Przysiółek H"])
         plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
         self.assertTrue(any("wybierz miejscowość" in e for e in plan.errors))
         self.assertNotIn("A", plan.group_dirs)   # ręczna miejscowość nie zastępuje wyboru
         p.town, p.town_decided = "Wieś G", True
         plan = pl.build_plan([group("A")], {"A": a}, {"A": p}, self.arch)
-        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Wieś G/WIDEO"))
+        self.assertEqual(plan.group_dirs["A"], Path("Hobby/Wieś G/Kapliczka/WIDEO"))
 
     def test_town_options_for_events(self):
         places = {"A": place("Miasto A"), "B": Place(town_candidates=["Wieś G", "Miasto A"])}
         self.assertEqual(pl.town_options([group("A"), group("B")], places), ["Miasto A", "Wieś G"])
 
     # Eventy
-    def test_event_structure_ignores_gps_objects(self):
+    def test_event_structure_ignores_gps_town_of_each_group(self):
         a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg Niepodległości", date="2026-11-11", place="Rzeszów")
-        places = {"A": place("Rzeszów", "Pomnik"), "B": place("Boguchwała", "Kościół")}
+        places = {"A": place("Rzeszów"), "B": place("Boguchwała")}
         plan = pl.build_plan([group("A"), group("B", KIND_PHOTO)], {"A": a, "B": a}, places, self.arch)
         self.assertTrue(plan.ready, plan.errors)
         self.assertEqual(plan.group_dirs["A"], Path("Eventy/Rzeszów/2026-11-11 Bieg Niepodległości/WIDEO"))
@@ -160,7 +159,7 @@ class PlannerTests(unittest.TestCase):
         plan = pl.build_plan([group("A", gps=None)], {"A": a}, {}, "")
         self.assertFalse(plan.ready)
 
-    def test_video_and_srt_share_destination_and_collision_suffix(self):
+    def _two_cards_with_existing_srt(self):
         a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg", date="2026-11-11", place="Rzeszów")
         target = self.arch / "Eventy/Rzeszów/2026-11-11 Bieg/WIDEO"
         target.mkdir(parents=True)
@@ -168,10 +167,55 @@ class PlannerTests(unittest.TestCase):
         # Dwie karty z tym samym numerem pliku
         g1 = group("k1", files=[Path("/k1/DJI_0001.MP4"), Path("/k1/DJI_0001.SRT")])
         g2 = group("k2", files=[Path("/k2/DJI_0001.MP4"), Path("/k2/DJI_0001.SRT")])
+        return [g1, g2], {"k1": a, "k2": a}, target
+
+    def test_existing_file_requires_decision(self):
+        groups, assign, target = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch)
+        self.assertEqual([c.key for c in plan.unresolved], ["k1", "k2"])
+        self.assertEqual(plan.conflicts[0].pairs, [(Path("/k1/DJI_0001.SRT"), target / "DJI_0001.SRT")])
+        self.assertEqual(plan.moves, [])          # bez decyzji nic nie jest kopiowane
+        self.assertTrue(plan.ready)               # przycisk aktywny – kliknięcie zada pytanie
+
+    def test_rename_keeps_both_and_video_matches_srt(self):
+        groups, assign, _ = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_RENAME, "k2": pl.ACTION_RENAME})
+        self.assertEqual(plan.unresolved, [])
+        self.assertEqual([m.target.name for m in plan.moves],
+                         ["DJI_0001 (1).MP4", "DJI_0001 (1).SRT", "DJI_0001 (2).MP4", "DJI_0001 (2).SRT"])
+        self.assertFalse(any(m.overwrite for m in plan.moves))
+
+    def test_overwrite_marks_only_existing_files(self):
+        groups, assign, target = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_OVERWRITE, "k2": pl.ACTION_OVERWRITE})
+        k1 = [m for m in plan.moves if m.source.parent == Path("/k1")]
+        self.assertEqual([(m.target.name, m.overwrite) for m in k1],
+                         [("DJI_0001.MP4", False), ("DJI_0001.SRT", True)])
+        # druga karta nie może nadpisać pliku dopiero co zaimportowanego – dostaje dopisek
+        k2 = [m for m in plan.moves if m.source.parent == Path("/k2")]
+        self.assertEqual([(m.target.name, m.overwrite) for m in k2],
+                         [("DJI_0001 (1).MP4", False), ("DJI_0001 (1).SRT", False)])
+
+    def test_skip_leaves_group_out(self):
+        groups, assign, _ = self._two_cards_with_existing_srt()
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_SKIP, "k2": pl.ACTION_RENAME})
+        self.assertEqual(plan.skipped, ["k1"])
+        self.assertEqual({m.source.parent for m in plan.moves}, {Path("/k2")})
+        self.assertEqual(plan.moves[0].target.name, "DJI_0001 (1).MP4")
+        plan = pl.build_plan(groups, assign, {}, self.arch,
+                             resolutions={"k1": pl.ACTION_SKIP, "k2": pl.ACTION_SKIP})
+        self.assertFalse(plan.ready)              # nic do zrobienia
+
+    def test_same_names_within_one_import_get_suffix_without_question(self):
+        a = pl.Assignment(pl.CATEGORY_EVENT, name="Bieg", date="2026-11-11", place="Rzeszów")
+        g1 = group("k1", files=[Path("/k1/DJI_0001.MP4")])
+        g2 = group("k2", files=[Path("/k2/DJI_0001.MP4")])
         plan = pl.build_plan([g1, g2], {"k1": a, "k2": a}, {}, self.arch)
-        names = [m.target.name for m in plan.moves]
-        self.assertEqual(names, ["DJI_0001 (1).MP4", "DJI_0001 (1).SRT",
-                                 "DJI_0001 (2).MP4", "DJI_0001 (2).SRT"])
+        self.assertEqual(plan.conflicts, [])
+        self.assertEqual([m.target.name for m in plan.moves], ["DJI_0001.MP4", "DJI_0001 (1).MP4"])
 
     def test_sanitize(self):
         self.assertEqual(pl.sanitize_component('Mecz: "Resovia" vs Stal?'), "Mecz- -Resovia- vs Stal-")
