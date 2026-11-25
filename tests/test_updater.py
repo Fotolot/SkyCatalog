@@ -105,7 +105,8 @@ class WindowsScriptTests(unittest.TestCase):
     """Uruchamia prawdziwy skrypt aktualizacji na folderach testowych."""
 
     def setUp(self):
-        self._tmp = tempfile.TemporaryDirectory()
+        # skrypt ponownie uruchamia program – może jeszcze działać podczas sprzątania
+        self._tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self._tmp.name)
         self.app = self.root / "Moja aplikacja & testy"         # spacja i & w ścieżce
         self.new = self.root / "nowa" / "SkyCatalog"
@@ -137,17 +138,28 @@ class WindowsScriptTests(unittest.TestCase):
         self.assertFalse((self.app / "_backup" / "ustawienia.json").exists())
 
     def test_failed_copy_restores_backup(self):
+        # Konflikt: w nowej wersji „konflikt” jest folderem, w starej plikiem – kopiowanie się nie uda
+        (self.app / "_internal" / "konflikt").write_text("plik", encoding="utf-8")
+        (self.new / "_internal" / "konflikt").mkdir()
+        (self.new / "_internal" / "konflikt" / "x.dll").write_text("x", encoding="utf-8")
+        res = self.run_script()
+        log = (self.root / "aktualizacja.log").read_text(errors="replace")
+        self.assertEqual(res.returncode, 1, log)
+        self.assertIn("przywracanie", log)
+        self.assertEqual((self.app / "_internal" / "lib.dll").read_text(), "v1")      # stara wersja wróciła
+        self.assertEqual((self.app / "ustawienia.json").read_text(encoding="utf-8"), "dane użytkownika")
+
+    def test_backup_failure_changes_nothing(self):
         locked = self.app / "_internal" / "lib.dll"
         import msvcrt
-        with open(locked, "r+b") as f:                    # blokada zapisu => robocopy zgłosi błąd
+        with open(locked, "r+b") as f:                    # nie da się odczytać => brak kopii zapasowej
             msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
             res = self.run_script()
             msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
         log = (self.root / "aktualizacja.log").read_text(errors="replace")
         self.assertEqual(res.returncode, 1, log)
-        self.assertIn("przywracanie", log)
-        self.assertEqual(locked.read_text(), "v1")
-
+        self.assertIn("nic nie zmieniono", log)
+        self.assertEqual(locked.read_text(), "v1")                                     # nic nie podmieniono
 
 if __name__ == "__main__":
     unittest.main()

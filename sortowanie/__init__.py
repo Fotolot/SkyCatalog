@@ -4,7 +4,7 @@ from pathlib import Path
 
 APP_NAME = "SkyCatalog"
 EXE_NAME = "SkyCatalog.exe"
-GITHUB_REPO = "skipperpvp-sudo/Sortowanie"
+GITHUB_REPO = "Fotolot/Sortowanie"
 RELEASE_ASSET = "SkyCatalog-portable.zip"
 
 
