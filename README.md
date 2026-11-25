@@ -24,9 +24,11 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
 
 ## Wersje i aktualizacje
 
-* **Numer wersji**: MAJOR.MINOR z pliku [`VERSION`](VERSION) + numer budowania GitHub Actions,
-  np. `1.1.15`. Widać go w **Aplikacja → O programie…** i we właściwościach pliku `.exe`
-  (Szczegóły). Zmianę MAJOR.MINOR robi się, edytując plik `VERSION`.
+* **Numer wersji**: MAJOR.MINOR z pliku [`VERSION`](VERSION) + kolejny numer poprawki – o 1
+  większy od ostatniego wydania tej wersji (np. `VERSION` = `1.2` → `1.2.1`, `1.2.2`, `1.2.3`…).
+  Widać go w **Aplikacja → O programie…** i we właściwościach pliku `.exe` (Szczegóły).
+  Nową wersję MAJOR.MINOR (np. `1.3`) zaczyna się, edytując plik `VERSION` – pierwsze wydanie
+  będzie miało numer `1.3.1`.
 * **Wydania**: każdy push do `main` (lub ręczne uruchomienie workflow na `main`) buduje program,
   uruchamia testy i samotest, pakuje cały folder do `SkyCatalog-portable.zip` i tworzy tag
   `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/SkyCatalog/releases) z listą
