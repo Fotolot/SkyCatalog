@@ -165,6 +165,14 @@ class PackageTests(unittest.TestCase):
         with self.assertRaises(updater.UpdateError):
             updater.download(rel, self.dir / "d2", opener=lambda r, timeout: FakeResponse(b"abcdef"))
 
+    def test_script_overwrites_files_with_same_size_and_date(self):
+        text = updater.build_script()
+        copy_new = next(line for line in text.splitlines() if line.startswith('robocopy "%NEW%"'))
+        restore = next(line for line in text.splitlines() if line.startswith('robocopy "%APP%\\_backup"'))
+        for line in (copy_new, restore):
+            self.assertIn("/IS", line)
+            self.assertIn("/IT", line)
+
     def test_script_is_ascii_and_protects_user_data(self):
         text = updater.build_script()
         text.encode("ascii")
@@ -191,6 +199,10 @@ class WindowsScriptTests(unittest.TestCase):
         (self.app / "ustawienia.json").write_text("dane użytkownika", encoding="utf-8")
         (self.new / "ustawienia.json").write_text("NIE KOPIOWAĆ", encoding="utf-8")
         (self.app / "katalog.sqlite").write_text("baza", encoding="utf-8")
+        # Ten sam rozmiar i ta sama data modyfikacji, inna treść – robocopy bez /IS pominąłby plik
+        same = 1_700_000_000
+        for d in (self.app, self.new):
+            os.utime(d / "_internal" / "lib.dll", (same, same))
         self.script = updater.write_script(self.root)
 
     def tearDown(self):
