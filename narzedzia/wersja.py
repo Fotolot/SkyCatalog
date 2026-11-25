@@ -4,6 +4,8 @@ Użycie (CI):  python narzedzia/wersja.py --z-tagow
 Wersja = MAJOR.MINOR z pliku VERSION + kolejny numer poprawki: o 1 większy od najwyższego
 istniejącego tagu vMAJOR.MINOR.N (pierwsze wydanie nowej wersji MAJOR.MINOR ma numer 1),
 np. VERSION = 1.2 → 1.2.1, 1.2.2, 1.2.3…
+Pełny numer w pliku VERSION (MAJOR.MINOR.PATCH, np. 1.3.0) jest używany dokładnie – tak ustawia
+się wersję wybraną przez użytkownika (SemVer, patrz CLAUDE.md).
 Lokalnie:     python narzedzia/wersja.py --build 0   (wersja testowa MAJOR.MINOR.0)
 Tworzy:
   sortowanie/_build.py         – stała VERSION w aplikacji (plik w .gitignore),
@@ -56,10 +58,13 @@ def main() -> None:
     ap.add_argument("--z-tagow", action="store_true", help="kolejny numer poprawki z tagów git (CI)")
     args = ap.parse_args()
     base = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"\d+\.\d+", base):
-        raise SystemExit(f"Plik VERSION musi mieć postać MAJOR.MINOR, a ma: {base!r}")
-    major, minor = (int(x) for x in base.split("."))
-    patch = next_patch(major, minor, git_tags()) if args.z_tagow else args.build
+    if re.fullmatch(r"\d+\.\d+\.\d+", base):
+        major, minor, patch = (int(x) for x in base.split("."))     # wersja wybrana ręcznie
+    elif re.fullmatch(r"\d+\.\d+", base):
+        major, minor = (int(x) for x in base.split("."))
+        patch = next_patch(major, minor, git_tags()) if args.z_tagow else args.build
+    else:
+        raise SystemExit(f"Plik VERSION musi mieć postać MAJOR.MINOR lub MAJOR.MINOR.PATCH, a ma: {base!r}")
     version = f"{major}.{minor}.{patch}"
     (ROOT / "sortowanie" / "_build.py").write_text(
         f'"""Wygenerowano przez narzedzia/wersja.py – nie edytuj."""\nVERSION = "{version}"\n', encoding="utf-8")

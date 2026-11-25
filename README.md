@@ -28,13 +28,20 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
   większy od ostatniego wydania tej wersji (np. `VERSION` = `1.2` → `1.2.1`, `1.2.2`, `1.2.3`…).
   Widać go w **Aplikacja → O programie…** i we właściwościach pliku `.exe` (Szczegóły).
   Nową wersję MAJOR.MINOR (np. `1.3`) zaczyna się, edytując plik `VERSION` – pierwsze wydanie
-  będzie miało numer `1.3.1`.
+  będzie miało numer `1.3.1`. Pełny numer w `VERSION` (np. `1.3.0`) jest używany dokładnie;
+  jeśli takie wydanie już istnieje, nowe nie powstaje (wydania nigdy nie są nadpisywane).
 * **Wydania**: każdy push do `main` (lub ręczne uruchomienie workflow na `main`) buduje program,
   uruchamia testy i samotest, pakuje cały folder do `SkyCatalog-portable.zip` i tworzy tag
   `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/SkyCatalog/releases) z listą
   zmian. Push na inne gałęzie tylko buduje i testuje (plik do pobrania w zakładce Actions).
 * **Aktualizacja w programie**: kilka sekund po starcie program w tle sprawdza najnowsze wydanie.
-  Brak internetu lub błąd serwera niczego nie blokuje. Gdy jest nowsza wersja, pojawia się okno
+  Brak internetu lub błąd serwera niczego nie blokuje (przy starcie błąd jest tylko zapisywany).
+  **Aplikacja → O programie… → Sprawdź aktualizacje** w razie problemu pokazuje przyczynę
+  (np. `HTTP 403: …`, `SSLCertVerificationError: …`, `JSONDecodeError: …` albo „wydanie nie zawiera
+  pliku SkyCatalog-portable.zip”) i przycisk **Otwórz log**. Dziennik
+  `%LOCALAPPDATA%\SkyCatalog\logs\aktualizacja.log` zawiera datę, wersję programu, adres, typ
+  i treść błędu, pełny traceback, a dla błędów HTTP – kod i początek odpowiedzi serwera.
+  Gdy jest nowsza wersja, pojawia się okno
   „Dostępna wersja X.Y.Z” z listą zmian:
   * **Aktualizuj** – pobiera ZIP do folderu tymczasowego, rozpakowuje go, uruchamia skrypt
     pomocniczy i zamyka program. Skrypt czeka na zamknięcie, robi **kopię zapasową** bieżącej
