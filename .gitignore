@@ -70,3 +70,6 @@ decyzje_lokalizacji.json
 *.db
 miniatury/
 kafelki/
+
+# Wersja wydania wygenerowana w CI
+sortowanie/_build.py

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -80,6 +81,9 @@ class MainWindow(QMainWindow):
         act = QAction("Ustawienia…", self)
         act.triggered.connect(self.open_settings)
         menu.addAction(act)
+        about = QAction("O programie…", self)
+        about.triggered.connect(self.show_about)
+        menu.addAction(about)
         quit_act = QAction("Zamknij", self)
         quit_act.triggered.connect(self.close)
         menu.addAction(quit_act)
@@ -140,6 +144,36 @@ class MainWindow(QMainWindow):
         if screen.width() < 1280 or screen.height() < 800:
             self.showMaximized()
 
+    # ── Aktualizacje i „O programie” ──
+    def check_updates(self, manual: bool = False) -> None:
+        from .update_dialog import UpdateChecker
+        self._checker = UpdateChecker(self)
+        self._checker.found.connect(lambda release: self._on_update_found(release, manual))
+        self._checker.start()
+
+    def _on_update_found(self, release, manual: bool) -> None:
+        from .. import updater
+        if release is None or not updater.is_newer(release.tag):
+            if manual:
+                QMessageBox.information(self, APP_NAME, f"Masz aktualną wersję {__version__}." if release else
+                                        "Nie udało się sprawdzić aktualizacji (brak internetu lub błąd serwera).")
+            return
+        from .update_dialog import UpdateDialog, run_update
+        if UpdateDialog(self, release).exec():
+            if self.sort_tab.busy:
+                QMessageBox.information(self, APP_NAME, "Poczekaj na zakończenie trwającej operacji na plikach "
+                                                        "i spróbuj ponownie (O programie → Sprawdź aktualizacje).")
+                return
+            run_update(self, release, self._quit_for_update)
+
+    def _quit_for_update(self) -> None:
+        self.close()                      # zapis ustawień i układu, zatrzymanie skanowania
+        self.app.quit()
+
+    def show_about(self) -> None:
+        from .update_dialog import AboutDialog
+        AboutDialog(self, lambda: self.check_updates(manual=True)).exec()
+
     def open_settings(self) -> None:
         st = self.sort_tab
         dlg = SettingsDialog(self, self.settings, st.cache.summary(), len(st.decisions),
@@ -177,6 +211,18 @@ def _windows_app_id() -> None:
             pass
 
 
+def _load_qt_translations(app: QApplication) -> None:
+    """Polskie napisy standardowych przycisków i okien Qt (Tak/Nie/Anuluj/Zamknij…)."""
+    from PySide6.QtCore import QLibraryInfo, QLocale, QTranslator
+    path = QLibraryInfo.path(QLibraryInfo.LibraryPath.TranslationsPath)
+    app._translators = []
+    for name in ("qtbase", "qtmultimedia", "qtwebengine"):
+        tr = QTranslator(app)
+        if tr.load(QLocale(QLocale.Language.Polish), name, "_", path):
+            app.installTranslator(tr)
+            app._translators.append(tr)
+
+
 def main(argv: list[str] | None = None) -> int:
     """``SkyCatalog_1.02.exe [folder_importu] [--mapa] [--skanuj]``"""
     argv = list(sys.argv if argv is None else argv)
@@ -186,6 +232,7 @@ def main(argv: list[str] | None = None) -> int:
     QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
+    _load_qt_translations(app)
     if ICON_PATH.exists():
         app.setWindowIcon(QIcon(str(ICON_PATH)))
     app.setOrganizationName(APP_NAME)
@@ -200,4 +247,36 @@ def main(argv: list[str] | None = None) -> int:
         QTimer.singleShot(300, win.sort_tab.load_source)
     if "--skanuj" in argv:
         QTimer.singleShot(800, win.map_tab.start_scan)
+    selftest = os.environ.get("SKYCATALOG_SELFTEST")
+    if selftest:
+        _run_selftest(app, win, Path(selftest))
+    else:
+        from .. import updater
+        if updater.FAILED_FLAG in argv:
+            from .update_dialog import show_failed_update_notice
+            QTimer.singleShot(500, lambda: show_failed_update_notice(win))
+        QTimer.singleShot(4000, win.check_updates)        # w tle; błędy nie blokują programu
     return app.exec()
+
+
+def _run_selftest(app: QApplication, win: "MainWindow", shot: Path) -> None:
+    """Samotest zbudowanego programu (CI): mapa Leaflet musi się załadować; zrzut + wynik w JSON."""
+    import json
+    import time
+    win.tabs.setCurrentWidget(win.map_tab)
+    started = time.monotonic()
+
+    def check() -> None:
+        ready = win.map_tab.map.ready
+        if not ready and time.monotonic() - started < 60:
+            QTimer.singleShot(500, check)
+            return
+
+        def finish() -> None:
+            win.grab().save(str(shot))
+            shot.with_suffix(".json").write_text(json.dumps(
+                {"wersja": __version__, "mapa_gotowa": ready, "sekundy": round(time.monotonic() - started, 1)}),
+                encoding="utf-8")
+            app.exit(0 if ready else 3)
+        QTimer.singleShot(3000 if ready else 0, finish)
+    QTimer.singleShot(500, check)

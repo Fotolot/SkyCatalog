@@ -1,5 +1,5 @@
 @echo off
-REM Buduje dist\SkyCatalog_1.02\SkyCatalog_1.02.exe. Uruchom z folderu projektu: build.bat
+REM Buduje przenosny folder dist\SkyCatalog\ z plikiem SkyCatalog.exe. Uruchom z folderu projektu: build.bat
 setlocal
 cd /d "%~dp0"
 
@@ -16,10 +16,11 @@ echo [3/4] Uruchamianie testow ...
 ".venv\Scripts\python.exe" -m unittest discover -s tests -t . || goto :error
 
 echo [4/4] Budowanie pliku .exe ...
+".venv\Scripts\python.exe" narzedzia\wersja.py --build 0 || goto :error
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm sortowanie.spec || goto :error
 
 echo.
-echo Gotowe: %cd%\dist\SkyCatalog_1.02\SkyCatalog_1.02.exe
+echo Gotowe: %cd%\dist\SkyCatalog\SkyCatalog.exe
 exit /b 0
 
 :error
