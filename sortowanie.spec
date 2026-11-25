@@ -9,6 +9,8 @@
 import pathlib
 import re
 
+from PyInstaller.utils.hooks import collect_data_files
+
 ROOT = pathlib.Path(SPECPATH)
 NAME = "SkyCatalog"
 VERSION_FILE = ROOT / "build" / "version_info.txt"
@@ -43,8 +45,10 @@ a = Analysis(
     binaries=[],
     datas=[("sortowanie/web", "sortowanie/web"),        # Leaflet i strona mapy (lokalnie)
            ("sortowanie/assets", "sortowanie/assets"),  # ikona okna
-           ("VERSION", ".")],
-    hiddenimports=["PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
+           ("VERSION", ".")]
+          + collect_data_files("certifi"),               # cacert.pem – awaryjna weryfikacja HTTPS
+    hiddenimports=["truststore", "certifi",              # weryfikacja certyfikatów HTTPS (tls.py)
+                   "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",
                    "PySide6.QtMultimedia", "PySide6.QtMultimediaWidgets"],
     excludes=["tkinter", "PIL", "pydoc", "PySide6.QtOpenGL", "PySide6.QtQuick3D", "PySide6.QtCharts",
               "PySide6.QtPdf", "PySide6.QtSql", "PySide6.QtTest", "PySide6.QtDesigner"],

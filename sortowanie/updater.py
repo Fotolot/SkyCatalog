@@ -37,7 +37,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from . import APP_NAME, EXE_NAME, GITHUB_REPO, RELEASE_ASSET, __version__
+from . import APP_NAME, EXE_NAME, GITHUB_REPO, RELEASE_ASSET, __version__, tls
 from .config import local_data_dir
 
 API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
@@ -160,6 +160,7 @@ def _log_entry(kind: str, summary: str, extra: list[str], tb: str = "") -> None:
     lines = [f"[{datetime.now().isoformat(timespec='seconds')}] {kind}",
              f"Wersja programu: {__version__} ({'exe' if is_frozen() else 'źródła'})",
              f"Adres: {API_URL}",
+             f"Weryfikacja TLS: {tls.mode()}" + (f" ({tls.problems()})" if tls.problems() else ""),
              f"Wynik: {summary}", *extra]
     if tb:
         lines += ["Traceback:", tb.rstrip()]
@@ -194,7 +195,7 @@ def parse_release(data: dict) -> Release | None:
                    page_url=str(data.get("html_url") or RELEASES_URL))
 
 
-def check_latest(timeout: float = 8.0, opener=urllib.request.urlopen) -> CheckResult:
+def check_latest(timeout: float = 8.0, opener=tls.urlopen) -> CheckResult:
     """Najnowsze wydanie albo opis błędu. Nie zgłasza wyjątków – każdy błąd trafia do dziennika."""
     try:
         req = urllib.request.Request(API_URL, headers={"Accept": "application/vnd.github+json",
@@ -222,7 +223,7 @@ def check_latest(timeout: float = 8.0, opener=urllib.request.urlopen) -> CheckRe
 
 
 def download(release: Release, dest_dir: Path, progress: Callable[[int, int], None] | None = None,
-             opener=urllib.request.urlopen) -> Path:
+             opener=tls.urlopen) -> Path:
     if not release.asset_url:
         raise UpdateError(f"Wydanie {release.tag} nie zawiera pliku {RELEASE_ASSET}.")
     dest_dir.mkdir(parents=True, exist_ok=True)
