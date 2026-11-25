@@ -241,6 +241,8 @@ def _load_qt_translations(app: QApplication) -> None:
 def main(argv: list[str] | None = None) -> int:
     """``SkyCatalog_1.02.exe [folder_importu] [--mapa] [--skanuj]``"""
     argv = list(sys.argv if argv is None else argv)
+    from .. import tls
+    tls.setup()                                        # przed pierwszym połączeniem sieciowym
     from .webmap import register_scheme
     register_scheme()                                  # przed utworzeniem QApplication
     _windows_app_id()
@@ -288,10 +290,13 @@ def _run_selftest(app: QApplication, win: "MainWindow", shot: Path) -> None:
             return
 
         def finish() -> None:
+            from .. import tls, updater
             win.grab().save(str(shot))
+            check = updater.check_latest()           # prawdziwe połączenie HTTPS z api.github.com
             shot.with_suffix(".json").write_text(json.dumps(
-                {"wersja": __version__, "mapa_gotowa": ready, "sekundy": round(time.monotonic() - started, 1)}),
-                encoding="utf-8")
+                {"wersja": __version__, "mapa_gotowa": ready, "sekundy": round(time.monotonic() - started, 1),
+                 "tls": tls.mode(), "aktualizacje": check.status, "aktualizacje_blad": check.error},
+                ensure_ascii=False), encoding="utf-8")
             app.exit(0 if ready else 3)
         QTimer.singleShot(3000 if ready else 0, finish)
     QTimer.singleShot(500, check)

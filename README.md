@@ -41,6 +41,9 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
   pliku SkyCatalog-portable.zip”) i przycisk **Otwórz log**. Dziennik
   `%LOCALAPPDATA%\SkyCatalog\logs\aktualizacja.log` zawiera datę, wersję programu, adres, typ
   i treść błędu, pełny traceback, a dla błędów HTTP – kod i początek odpowiedzi serwera.
+  Certyfikaty HTTPS (GitHub, pobieranie wydania, Overpass) są weryfikowane przez magazyn
+  certyfikatów Windows (pakiet `truststore` – z dociąganiem certyfikatów pośrednich i obsługą
+  antywirusów skanujących HTTPS), awaryjnie przez `certifi`. Weryfikacja nigdy nie jest wyłączana.
   Gdy jest nowsza wersja, pojawia się okno
   „Dostępna wersja X.Y.Z” z listą zmian:
   * **Aktualizuj** – pobiera ZIP do folderu tymczasowego, rozpakowuje go, uruchamia skrypt

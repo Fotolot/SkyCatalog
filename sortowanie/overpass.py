@@ -23,7 +23,7 @@ import urllib.parse
 import urllib.request
 from typing import Callable
 
-from . import __version__
+from . import __version__, tls
 
 DEFAULT_ENDPOINT = "https://overpass-api.de/api/interpreter"
 ENV_ENDPOINT = "SORTOWANIE_OVERPASS_URL"
@@ -42,7 +42,7 @@ class OverpassError(Exception):
 
 def _default_opener(request: urllib.request.Request, timeout: float) -> tuple[int, bytes]:
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
+        with tls.urlopen(request, timeout=timeout) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read() if exc.fp else b""

@@ -79,7 +79,11 @@ jobs:
           $result = Get-Content "$env:RUNNER_TEMP\selftest.json" -Raw
           "Samotest: kod $($p.ExitCode), $result"
           if ($p.ExitCode -ne 0) { throw "Samotest programu nie powiódł się" }
-          if ((($result | ConvertFrom-Json).wersja) -ne $env:APP_VERSION) { throw "Program zgłasza złą wersję" }
+          $json = $result | ConvertFrom-Json
+          if ($json.wersja -ne $env:APP_VERSION) { throw "Program zgłasza złą wersję" }
+          # HTTPS w zbudowanym .exe: certyfikaty weryfikowane przez Windows (truststore), bez błędów TLS
+          if ($json.tls -notlike "truststore*") { throw "Weryfikacja TLS nie używa truststore: $($json.tls)" }
+          if ($json.aktualizacje_blad -match "SSL|CERTIFICATE|certificate") { throw "Błąd TLS przy sprawdzaniu aktualizacji: $($json.aktualizacje_blad)" }
 
       - name: Zrzuty ekranu (przykładowe dane, bez pobierania kafelków)
         continue-on-error: true

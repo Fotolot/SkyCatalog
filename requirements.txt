@@ -1,2 +1,4 @@
 # Zależności aplikacji
 PySide6>=6.7          # interfejs Qt, QtWebEngine (mapa Leaflet), QtMultimedia (odtwarzacz wideo)
+truststore>=0.9       # weryfikacja certyfikatów HTTPS przez magazyn Windows (aktualizacje, Overpass)
+certifi>=2024.2.2     # awaryjny zestaw certyfikatów (cacert.pem), gdy truststore niedostępny
