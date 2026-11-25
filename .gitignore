@@ -20,8 +20,7 @@ dist/
 *.exe
 *.msi
 *.zip
-# Plik .spec generowany automatycznie; własny plik budowania jest w build/
-# i wpisany wyjątkiem poniżej
+# Pliki .spec generowane automatycznie – zachowujemy tylko sortowanie.spec
 /*.spec
 !sortowanie.spec
 
