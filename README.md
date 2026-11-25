@@ -28,7 +28,8 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
   większy od ostatniego wydania tej wersji (np. `VERSION` = `1.2` → `1.2.1`, `1.2.2`, `1.2.3`…).
   Widać go w **Aplikacja → O programie…** i we właściwościach pliku `.exe` (Szczegóły).
   Nową wersję MAJOR.MINOR (np. `1.3`) zaczyna się, edytując plik `VERSION` – pierwsze wydanie
-  będzie miało numer `1.3.1`.
+  będzie miało numer `1.3.1`. Pełny numer w `VERSION` (np. `1.3.0`) jest używany dokładnie;
+  jeśli takie wydanie już istnieje, nowe nie powstaje (wydania nigdy nie są nadpisywane).
 * **Wydania**: każdy push do `main` (lub ręczne uruchomienie workflow na `main`) buduje program,
   uruchamia testy i samotest, pakuje cały folder do `SkyCatalog-portable.zip` i tworzy tag
   `v<wersja>` oraz [GitHub Release](https://github.com/Fotolot/SkyCatalog/releases) z listą
