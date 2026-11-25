@@ -1,0 +1,58 @@
+# ── Python: cache i pliki skompilowane ──────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ── Środowiska wirtualne ────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Pliki wynikowe budowania (PyInstaller itp.) ─────────────────
+build/
+dist/
+*.exe
+*.msi
+*.zip
+# Plik .spec generowany automatycznie; własny plik budowania jest w build/
+# i wpisany wyjątkiem poniżej
+/*.spec
+!sortowanie.spec
+
+# ── Klucze API, hasła, konfiguracja prywatna ───────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+secrets.*
+credentials*.json
+config.local.*
+settings.local.*
+
+# ── Prywatne materiały i dane robocze ──────────────────────────
+prywatne/
+private/
+dane/
+data/
+wyniki/
+output/
+logs/
+*.log
+historia_sortowania.json
+
+# ── IDE i system ────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
