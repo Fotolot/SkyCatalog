@@ -371,3 +371,58 @@ class ExclusionDefaultsTests(unittest.TestCase):
             paths = scanner.default_excluded_paths()
             self.assertNotIn(str(Path("/tmp/runner")), paths)
             self.assertIn("/tmp/runner/local", paths)
+
+
+class ReviewFixTests(CatalogTestBase):
+    def test_unreadable_folder_keeps_previous_materials(self):
+        make_jpeg(self.disk / "ok" / "a.JPG", 50.0, 22.0)
+        make_jpeg(self.disk / "tajne" / "b.JPG", 50.0, 22.0)
+        self.scan()
+        real = os.scandir
+
+        def fake(path):
+            if str(path).endswith("tajne"):
+                raise PermissionError(13, "Access denied")
+            return real(path)
+        with mock.patch("sortowanie.scanner.os.scandir", side_effect=fake):
+            prog = self.scan()
+        self.assertEqual(self.by_name("b.JPG")["status"], cat.STATUS_OK)
+        self.assertEqual(prog.finalize["pominięte_niesprawdzone"], 1)
+
+    def test_cloud_state_change_reparsed(self):
+        p = make_jpeg(self.disk / "c.JPG", 50.0, 22.0)
+        st = p.stat()
+        d = str(self.disk)
+        self.cat.process_directory(d, [cat.FileEntry(str(p), st.st_size, st.st_mtime, cloud_only=True)], d, 1)
+        self.assertEqual(self.by_name("c.JPG")["status"], cat.STATUS_CLOUD)
+        stats = self.cat.process_directory(d, [cat.FileEntry(str(p), st.st_size, st.st_mtime)], d, 2)
+        self.assertEqual(stats["zmienione"], 1)
+        r = self.by_name("c.JPG")
+        self.assertEqual(r["status"], cat.STATUS_OK)
+        self.assertIsNotNone(r["lat"])
+        self.cat.process_directory(d, [cat.FileEntry(str(p), st.st_size, st.st_mtime, cloud_only=True)], d, 3)
+        self.assertEqual(self.by_name("c.JPG")["status"], cat.STATUS_CLOUD)
+
+    def test_interrupted_running_scan_resumable(self):
+        for i in range(3):
+            make_jpeg(self.disk / f"f{i}" / "a.JPG", 50.0, 22.0)
+        s = Scanner(self.cat, self.settings)
+        s.cancel()
+        s.scan([str(self.disk)])
+        self.cat.set_state("scan_status", "trwa")        # program zamknięty w trakcie
+        self.assertTrue(Scanner(self.cat, self.settings).can_resume())
+        prog = Scanner(self.cat, self.settings).scan(resume=True)
+        self.assertTrue(prog.finished)
+        self.assertEqual(len(self.rows()), 3)
+
+
+class LinkClassificationTests(unittest.TestCase):
+    def test_cloud_placeholders_are_not_links(self):
+        from sortowanie import scanner as sc
+        cloud_file = sc.FILE_ATTRIBUTE_REPARSE_POINT | sc.FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+        self.assertFalse(sc.is_link_entry(False, False, cloud_file, 0x9000101A))     # plik OneDrive
+        self.assertFalse(sc.is_link_entry(False, False, sc.FILE_ATTRIBUTE_REPARSE_POINT, 0x9000701A))  # folder OneDrive
+        self.assertTrue(sc.is_link_entry(False, False, sc.FILE_ATTRIBUTE_REPARSE_POINT, sc.IO_REPARSE_TAG_MOUNT_POINT))
+        self.assertTrue(sc.is_link_entry(False, True, 0, 0))
+        self.assertTrue(sc.is_link_entry(True, False, 0, 0))
+        self.assertFalse(sc.is_link_entry(False, False, 0, 0))

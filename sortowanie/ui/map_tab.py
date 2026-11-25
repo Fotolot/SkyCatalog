@@ -427,7 +427,7 @@ class MapTab(QWidget):
             self.scan_status.setText("Anulowanie – kończę bieżący folder…")
 
     def _update_scan_buttons(self, running: bool = False) -> None:
-        can_resume = not running and self.catalog.get_state("scan_status") == "przerwane" \
+        can_resume = not running and self.catalog.get_state("scan_status") in ("przerwane", "trwa") \
             and self.catalog.queue_pending() > 0
         self.btn_scan.setEnabled(not running)
         self.btn_cancel.setEnabled(running)
@@ -483,4 +483,5 @@ class MapTab(QWidget):
     def shutdown(self) -> None:
         if self.scanner and self.scanner.running:
             self.scanner.cancel()
+            self.scanner.wait(5.0)     # zapis stanu „przerwane”, aby można było wznowić
         self.preview.show_material(None)

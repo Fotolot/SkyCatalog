@@ -31,6 +31,26 @@ FILE_ATTRIBUTE_OFFLINE = 0x1000
 FILE_ATTRIBUTE_RECALL_ON_OPEN = 0x40000
 FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS = 0x400000
 CLOUD_ATTRS = FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_OPEN | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS
+# Znaczniki punktów ponownej analizy, które są dowiązaniami (nie wchodzimy w nie)
+IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003      # punkt połączenia (junction) / zamontowany wolumin
+IO_REPARSE_TAG_SYMLINK = 0xA000000C
+LINK_REPARSE_TAGS = {IO_REPARSE_TAG_MOUNT_POINT, IO_REPARSE_TAG_SYMLINK}
+
+
+def is_link_entry(is_symlink: bool, is_junction: bool, attrs: int, reparse_tag: int) -> bool:
+    """Czy wpis to dowiązanie/punkt połączenia.
+
+    Pliki i foldery OneDrive „na żądanie” też są punktami ponownej analizy (znaczniki chmury),
+    ale NIE są dowiązaniami – muszą być skanowane (pliki jako „tylko w chmurze”).
+    """
+    if is_symlink or is_junction:
+        return True
+    if attrs & FILE_ATTRIBUTE_REPARSE_POINT:
+        if reparse_tag in LINK_REPARSE_TAGS:
+            return True
+        if reparse_tag == 0 and not attrs & CLOUD_ATTRS:
+            return True        # nieznany znacznik bez cech chmury – ostrożnie traktujemy jak dowiązanie
+    return False
 
 DRIVE_REMOVABLE, DRIVE_FIXED, DRIVE_REMOTE, DRIVE_CDROM, DRIVE_RAMDISK = 2, 3, 4, 5, 6
 DRIVE_TYPES = {DRIVE_REMOVABLE: "wymienny", DRIVE_FIXED: "lokalny", DRIVE_REMOTE: "sieciowy",
@@ -157,7 +177,13 @@ class Scanner:
         self._cancel.set()
 
     def can_resume(self) -> bool:
-        return self.catalog.get_state("scan_status") == "przerwane" and self.catalog.queue_pending() > 0
+        # „trwa” bez działającego wątku = program zamknięto w trakcie skanu – też można wznowić
+        return (not self.running and self.catalog.get_state("scan_status") in ("przerwane", "trwa")
+                and self.catalog.queue_pending() > 0)
+
+    def wait(self, timeout: float = 5.0) -> None:
+        if self._thread is not None:
+            self._thread.join(timeout)
 
     # Wykluczenia
     def _excluded(self, path: str) -> bool:
@@ -279,8 +305,8 @@ class Scanner:
         name_cf = entry.name.casefold()
         st = entry.stat(follow_symlinks=False)
         attrs = getattr(st, "st_file_attributes", 0)
-        is_link = entry.is_symlink() or bool(attrs & FILE_ATTRIBUTE_REPARSE_POINT) or \
-            (hasattr(entry, "is_junction") and entry.is_junction())
+        is_link = is_link_entry(entry.is_symlink(), hasattr(entry, "is_junction") and entry.is_junction(),
+                                attrs, getattr(st, "st_reparse_tag", 0))
         if is_link:
             # Nie wchodzimy w dowiązania ani punkty połączenia (ryzyko pętli / innego dysku)
             try:

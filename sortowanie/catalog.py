@@ -357,14 +357,17 @@ class Catalog:
             return stats
         c = self.conn()
         existing = {r["stem_key"]: r for r in c.execute(
-            "SELECT id, stem_key FROM materials WHERE dir_key=?", (dir_key,))}
+            "SELECT id, stem_key, status FROM materials WHERE dir_key=?", (dir_key,))}
         for stem_key, files in groups.items():
             row = existing.get(stem_key)
             if row is not None and not force:
                 stored = {(r["path_key"], r["size"], r["mtime"]) for r in c.execute(
                     "SELECT path_key, size, mtime FROM files WHERE material_id=?", (row["id"],))}
                 current = {(path_key(f.path), f.size, f.mtime) for f in files}
-                if stored == current:
+                # pobranie z chmury / zwolnienie miejsca nie zmienia rozmiaru ani daty – sprawdzamy osobno
+                cloud_now = any(f.cloud_only for f in files)
+                cloud_changed = cloud_now != (row["status"] == STATUS_CLOUD)
+                if stored == current and not cloud_changed:
                     with self._write_lock, c:
                         c.execute("UPDATE materials SET last_seen_run=?, root=?, "
                                   "status=CASE WHEN status IN (?, ?) THEN ? ELSE status END WHERE id=?",
@@ -467,7 +470,15 @@ class Catalog:
         """Po PEŁNYM przejściu katalogów: materiały niewidziane w tym przebiegu → 'brak pliku'.
         Przeniesienia poza aplikacją (ta sama nazwa, rozmiar i czas) zachowują kategorię."""
         c = self.conn()
-        result = {"brak_pliku": 0, "rozpoznane_przeniesienia": 0}
+        result = {"brak_pliku": 0, "rozpoznane_przeniesienia": 0, "pominięte_niesprawdzone": 0}
+        # Foldery, których w tym przebiegu nie udało się sprawdzić (brak uprawnień, błąd,
+        # wykluczenie) – ich materiałów NIE uznajemy za usunięte.
+        unchecked = [path_key(p).rstrip("\\/") for (p,) in c.execute(
+            "SELECT path FROM scan_skips WHERE run=? AND reason NOT LIKE ?", (run, "folder zniknął%"))]
+
+        def under_unchecked(dk: str) -> bool:
+            return any(dk == u or dk.startswith(u + os.sep) for u in unchecked)
+
         for root in roots:
             clause, args = self._prefix_clause(root)
             with self._write_lock, c:
@@ -475,6 +486,9 @@ class Catalog:
                                     (*args, run, STATUS_MISSING, STATUS_CLOUD)).fetchall()
                 for m in missing:
                     if is_in_flight(m["main_path"]):
+                        continue
+                    if under_unchecked(m["dir_key"]):
+                        result["pominięte_niesprawdzone"] += 1
                         continue
                     twin = c.execute(
                         "SELECT id FROM materials WHERE stem_key=? AND kind=? AND size=? AND mtime=? "
