@@ -19,7 +19,7 @@ echo [4/4] Budowanie pliku .exe ...
 ".venv\Scripts\python.exe" -m PyInstaller --clean --noconfirm sortowanie.spec || goto :error
 
 echo.
-echo Gotowe: %cd%\dist\Sortowanie.exe
+echo Gotowe: %cd%\dist\Sortowanie\Sortowanie.exe
 exit /b 0
 
 :error

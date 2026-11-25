@@ -4,6 +4,11 @@ on:
   push:
     branches: ["**"]
   workflow_dispatch:
+    inputs:
+      overpass:
+        description: "Uruchom diagnostykę Overpass na prawdziwych danych (kilka zapytań)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,55 +23,74 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Instalacja PyInstaller
-        run: python -m pip install -r requirements-dev.txt
+      - name: Instalacja zależności
+        run: python -m pip install -r requirements-dev.txt pillow
 
-      - name: Testy
+      - name: Testy (w tym testy Windows i PySide6)
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python -m unittest discover -s tests -t . -v
 
-      - name: Budowanie .exe
+      - name: Budowanie aplikacji
         run: python -m PyInstaller --clean --noconfirm sortowanie.spec
 
-      - name: Zrzut ekranu okna aplikacji
+      - name: Zrzuty ekranu (przykładowe dane, bez pobierania kafelków)
         continue-on-error: true
         shell: pwsh
         run: |
           $env:APPDATA = "$env:RUNNER_TEMP\appdata"
-          # Przykładowa „karta pamięci” z syntetycznymi plikami (bez GPS z sieci – tryb offline)
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\local"
+          $demo = "$env:RUNNER_TEMP\demo"
+          python narzedzia/dane_demo.py "$demo"
           New-Item -ItemType Directory -Force "$env:APPDATA\Sortowanie" | Out-Null
-          '{"offline": true}' | Set-Content -Encoding utf8 "$env:APPDATA\Sortowanie\ustawienia.json"
-          python -c "from pathlib import Path; from tests.helpers import make_jpeg, make_mp4, DJI_SRT; d=Path(r'$env:RUNNER_TEMP\karta\DCIM\100MEDIA'); make_mp4(d/'DJI_0001.MP4'); (d/'DJI_0001.SRT').write_text(DJI_SRT.format(lat=50.027082, lon=22.003366), encoding='utf-8'); (d/'DJI_0001.LRF').write_bytes(b'x'); make_jpeg(d/'DJI_0002.JPG', 50.040451, 21.99913, '2026:11:11 10:00:00'); (d/'DJI_0002.DNG').write_bytes(b'x'); make_jpeg(d/'DJI_0003.JPG', None, None, '2026:11:11 11:00:00')"
-          $p = Start-Process -FilePath "dist\Sortowanie.exe" -ArgumentList "`"$env:RUNNER_TEMP\karta`"" -PassThru
-          Start-Sleep -Seconds 15
+          # Podkład wyłączony (nieistniejący host): automat nie pobiera kafelków z serwerów OSM.
+          $settings = @{ offline = $true; scan_drives = @("$demo"); tile_url = "https://kafelki.invalid/{z}/{x}/{y}.png" } | ConvertTo-Json
+          $settings | Set-Content -Encoding utf8 "$env:APPDATA\Sortowanie\ustawienia.json"
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
-          $g = [System.Drawing.Graphics]::FromImage($bmp)
-          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
-          New-Item -ItemType Directory -Force zrzuty | Out-Null
-          $bmp.Save("zrzuty\okno.png", [System.Drawing.Imaging.ImageFormat]::Png)
-          "Proces działa: $(-not $p.HasExited)" | Tee-Object zrzuty\stan.txt
+          function Snap($name) {
+            $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+            $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+            [System.Drawing.Graphics]::FromImage($bmp).CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+            New-Item -ItemType Directory -Force zrzuty | Out-Null
+            $bmp.Save("zrzuty\$name.png", [System.Drawing.Imaging.ImageFormat]::Png)
+            $small = New-Object System.Drawing.Bitmap $bmp, ([int]($b.Width * 0.75)), ([int]($b.Height * 0.75))
+            $ms = New-Object System.IO.MemoryStream
+            $small.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+            $b64 = [Convert]::ToBase64String($ms.ToArray())
+            "ZRZUT-BASE64-START $name"
+            for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
+            "ZRZUT-BASE64-END"
+          }
+          $p = Start-Process -FilePath "dist\Sortowanie\Sortowanie.exe" -ArgumentList "--mapa", "--skanuj" -PassThru
+          Start-Sleep -Seconds 40
+          Snap "mapa"
+          "Proces działa: $(-not $p.HasExited)"
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
-          # Zmniejszony zrzut w logu (base64) – podgląd bez pobierania artefaktu
-          $w = [int]($b.Width * 0.75); $h = [int]($b.Height * 0.75)
-          $small = New-Object System.Drawing.Bitmap $bmp, $w, $h
-          $ms = New-Object System.IO.MemoryStream
-          $small.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
-          $b64 = [Convert]::ToBase64String($ms.ToArray())
-          "ZRZUT-BASE64-START"
-          for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
-          "ZRZUT-BASE64-END"
+          Start-Sleep -Seconds 2
+          $p = Start-Process -FilePath "dist\Sortowanie\Sortowanie.exe" -ArgumentList "`"$demo\Karta`"" -PassThru
+          Start-Sleep -Seconds 25
+          Snap "sortowanie"
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+
+      - name: Diagnostyka Overpass na prawdziwych danych
+        if: github.event_name == 'workflow_dispatch' && inputs.overpass
+        continue-on-error: true
+        run: python narzedzia/sprawdz_lokalizacje.py 50.027082,22.003366 50.040451,21.999130
+
+      - name: Spakowanie aplikacji
+        shell: pwsh
+        run: Compress-Archive -Path dist\Sortowanie -DestinationPath Sortowanie-windows.zip
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Sortowanie-exe
-          path: dist/Sortowanie.exe
+          name: Sortowanie-windows
+          path: Sortowanie-windows.zip
           retention-days: 14
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: zrzut-ekranu
+          name: zrzuty-ekranu
           path: zrzuty/
           if-no-files-found: ignore
           retention-days: 14

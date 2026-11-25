@@ -1,26 +1,26 @@
 # Sortowanie
 
-Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera):
-wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię, a aplikacja przenosi
-filmy i zdjęcia do uporządkowanej struktury folderów.
+Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, kamera). Ma dwie zakładki:
 
-![Okno aplikacji Sortowanie](docs/zrzut-okna.png)
+* **Sortowanie** – wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię (Hobby, Eventy,
+  Zlecenia), a aplikacja przenosi filmy i zdjęcia do uporządkowanej struktury folderów,
+* **Mapa materiałów** – przeszukuje komputer w poszukiwaniu zdjęć i filmów z GPS i pokazuje je
+  na mapie OpenStreetMap: zdjęcia jako punkty, filmy jako punkt startowy i trasa lotu z całego SRT.
 
-## Pobierz gotowy program (.exe)
+![Mapa materiałów](docs/zrzut-mapy.png)
 
-Plik `Sortowanie.exe` jest budowany automatycznie na Windows (GitHub Actions) przy każdej
-zmianie w repozytorium:
+## Pobierz gotowy program
 
-1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions)
-   i otwórz najnowsze zakończone budowanie „Budowanie Sortowanie.exe (Windows)”.
-2. Na dole strony, w sekcji **Artifacts**, kliknij **Sortowanie-exe** (wymaga zalogowania na GitHubie).
-3. Rozpakuj ZIP i uruchom `Sortowanie.exe` – nie wymaga instalacji Pythona.
+Program jest budowany automatycznie na Windows (GitHub Actions) przy każdej zmianie:
 
-Windows SmartScreen może ostrzec przed nieznanym programem (plik nie jest podpisany):
-„Więcej informacji” → „Uruchom mimo to”.
+1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions) i otwórz
+   najnowsze zakończone budowanie „Budowanie Sortowanie.exe (Windows)”.
+2. Na dole strony, w sekcji **Artifacts**, kliknij **Sortowanie-windows** (wymaga zalogowania).
+3. Rozpakuj ZIP (wewnątrz jest folder `Sortowanie`) i uruchom `Sortowanie\Sortowanie.exe`.
+   Nie trzeba instalować Pythona. Cały folder trzymaj razem – zawiera bibliotekę Qt i przeglądarkę mapy.
 
-Folder z kartą pamięci możesz przeciągnąć na ikonę `Sortowanie.exe` – zostanie od razu wczytany
-(odpowiada to uruchomieniu `Sortowanie.exe <folder>`).
+Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „Więcej informacji” →
+„Uruchom mimo to”. Folder z kartą możesz przeciągnąć na `Sortowanie.exe` – zostanie od razu wczytany.
 
 ## Kategorie lotów
 
@@ -64,6 +64,96 @@ Zasady:
   kategorii, a wymagane pola nie są uzupełnione.
 - **Bezpieczeństwo** – istniejące pliki nigdy nie są nadpisywane; ostatni import można
   cofnąć przyciskiem „Cofnij ostatni import”.
+
+## Mapa materiałów
+
+### Skanowanie komputera
+
+* **Skanuj komputer** przeszukuje domyślnie wszystkie lokalne dyski i partycje (także wymienne,
+  np. karty) razem z podfolderami. Skanowanie działa w tle – postęp, liczba znalezionych materiałów
+  i aktualny folder są widoczne na bieżąco. **Anuluj** przerywa, **Wznów** kontynuuje od miejsca
+  przerwania (także po ponownym uruchomieniu programu).
+* **Ustawienia skanowania…** – wybór dysków lub folderów, opcjonalne dyski sieciowe i wykluczenia.
+* Nie są potrzebne uprawnienia administratora. Foldery bez dostępu, foldery systemowe i ukryte
+  (Windows, Program Files, AppData, kosz itp.) są pomijane – przycisk **Pominięte…** pokazuje podsumowanie.
+* Nie wchodzi w dowiązania i punkty połączeń (bez ryzyka pętli). Pliki dostępne **tylko w chmurze**
+  (OneDrive itp.) są zapisywane w katalogu, ale nie są pobierane. Odłączony dysk: wpisy pozostają
+  i są oznaczone jako niedostępne.
+* Kolejne skanowania analizują tylko nowe i zmienione pliki (rozmiar i czas – także samego SRT),
+  bez liczenia sum kontrolnych. Pliki usunięte lub przeniesione poza aplikacją są wykrywane.
+* Nic nie jest wysyłane do internetu – zdjęcia, filmy i SRT są czytane wyłącznie lokalnie.
+
+### Co jest pokazywane
+
+* **Zdjęcia** JPG/JPEG/DNG – mała kropka w miejscu zapisanym w EXIF (prawidłowe N/S i E/W).
+  Para JPG + DNG o tej samej nazwie w tym samym folderze to jeden materiał; w panelu można wybrać
+  każdy z plików. Zdjęcia bez GPS trafiają na listę **Bez lokalizacji** (bez fikcyjnego punktu).
+* **Filmy** MP4/MOV z SRT (ta sama nazwa i folder) – wyraźny punkt startowy (pierwsza prawidłowa
+  pozycja na osi czasu) i linia trasy z **całego** SRT. Luki i oczywiste skoki GPS dzielą linię na
+  segmenty zamiast rysować fałszywe połączenia; oryginalne próbki są zachowane w katalogu.
+  Pozycja drona jest odróżniana od punktu startowego/pilota (`HOME`). Obsługiwane warianty SRT DJI:
+  Mini 3/4 Pro, Air/Mavic, starsze `GPS()/HOME()`, gogle i Avata 2.
+* Film bez SRT lub bez prawidłowej trasy jest oznaczony na liście jako **wymagający danych** –
+  trasa nigdy nie jest zgadywana. Każdy plik nagrania dzielonego ma własną trasę.
+* Zakładka sortowania nadal ustala lokalizację z **pierwszych 3 sekund** SRT – to osobne użycie parsera.
+
+### Obsługa mapy
+
+* Przesuwanie i przybliżanie myszą, **Pokaż wszystkie materiały**, **Przybliż do wybranego**, legenda.
+* Kliknięcie punktu lub linii pokazuje materiał w prawym panelu. Gdy w miejscu kliknięcia jest kilka
+  materiałów, pojawia się lista do wyboru. Wszystkie trasy w widoku są widoczne od razu.
+* Filtry działają łącznie na mapę i listy: **Pokaż zdjęcia** / **Pokaż wideo** (osobne warstwy),
+  zakres dat wykonania, kategoria (Hobby, Eventy, Zlecenia, Nieprzypisane), miejscowość, wydarzenie
+  lub zlecenie, wyszukiwanie po nazwie i ścieżce, **Wyczyść filtry**. Data modyfikacji pliku nigdy
+  nie jest traktowana jako data wykonania.
+* Motyw jasny/ciemny/systemowy: menu **Aplikacja → Ustawienia…**.
+
+### Panel podglądu
+
+* Zdjęcie z poprawną orientacją (EXIF), nazwa, ścieżka, data, GPS, rozmiar, rozdzielczość i dane aparatu.
+  DNG jest pokazywany przez wbudowany w plik podgląd JPEG.
+* Film: odtwarzacz (odtwarzanie, pauza, przewijanie, głośność), punkt startowy, czas trwania,
+  rozdzielczość, FPS, dane sprzętu i status powiązanego SRT.
+* **Przejdź do pliku** (Eksplorator z zaznaczonym plikiem), **Otwórz w aplikacji domyślnej**, **Kopiuj ścieżkę**.
+* Brak kodeka lub podglądu nie powoduje awarii – pojawia się komunikat i możliwość otwarcia pliku
+  w aplikacji domyślnej. Aplikacja nie instaluje kodeków i nie konwertuje plików.
+  Filmy H.265/HEVC z dronów DJI mogą wymagać „Rozszerzeń wideo HEVC” z Microsoft Store.
+
+### Powiązanie z sortowaniem
+
+Obie zakładki korzystają z tego samego katalogu materiałów. Po przeniesieniu w zakładce sortowania
+aktualizowane są ścieżki filmu, zdjęcia i plików towarzyszących (SRT, DNG, LRF), kategoria,
+miejscowość oraz wydarzenie/zlecenie – trasa i metadane zostają, a mapa odświeża się bez skanowania
+dysków. Częściowy błąd i cofnięcie operacji są uwzględniane. Kategoria nigdy nie jest przypisywana
+na podstawie położenia pliku na dysku.
+
+### Mapa bazowa i zasady dostawcy
+
+* Mapa to [Leaflet](https://leafletjs.com/) 1.9.4 dołączony do aplikacji (`sortowanie/web/leaflet`,
+  licencja BSD-2), wyświetlany w QtWebEngine. Punkty i trasy są rysowane na Canvas; geometria
+  jest pobierana z lokalnego katalogu tylko dla bieżącego widoku, a przy bardzo gęstych zbiorach
+  punkty są przerzedzane (kliknięcie i tak pokazuje wszystkie materiały w danym miejscu).
+* Domyślny podkład: `https://tile.openstreetmap.org/{z}/{x}/{y}.png` zgodnie z
+  [zasadami OSMF](https://operations.osmfoundation.org/policies/tiles/): pobierane są wyłącznie
+  kafelki oglądanego widoku, z cache HTTP na dysku i własnym User-Agent aplikacji; **nie ma**
+  pobierania obszarów ani trybu offline. Oznaczenie „© OpenStreetMap contributors” i odnośnik
+  „Zgłoś błąd mapy” są stale widoczne na mapie.
+* Dostawcę podkładu (adres, oznaczenie źródła, maks. przybliżenie) zmienisz w **Ustawieniach** –
+  przed zmianą sprawdź warunki wybranego dostawcy.
+* Overpass API **nie** służy do rysowania mapy – tylko do rozpoznawania miejscowości i obiektów
+  w zakładce sortowania.
+* Bez internetu: lista materiałów, filtry, metadane i podgląd działają normalnie, a mapa pokazuje
+  czytelny komunikat o niedostępnym podkładzie.
+
+### Bezpieczeństwo
+
+* Zakładka mapy tylko odczytuje pliki – nie zmienia metadanych, nazw ani położenia.
+* Nazwy plików, ścieżki i metadane są traktowane jako niezaufane: nie trafiają do HTML/JavaScript
+  (lista wyboru i panel są w Qt i pokazują zwykły tekst).
+* Strona mapy jest serwowana przez wewnętrzny schemat `fotolot://` wyłącznie z białej listy plików
+  aplikacji – bez lokalnego serwera HTTP i bez dostępu do dysku. Nawigacja i nowe okna są zablokowane.
+* Eksplorator i aplikacja domyślna są otwierane przez API Windows, bez budowania poleceń powłoki.
+  Akcje są dostępne tylko dla plików zapisanych w katalogu.
 
 ## Lokalizacja: OpenStreetMap przez Overpass API
 
@@ -139,51 +229,48 @@ Opcja `--surowe` pokazuje pełny JSON, `--endpoint` pozwala sprawdzić własny s
 
 GPS jest odczytywany z napisów SRT dronów DJI, z EXIF zdjęć oraz z metadanych MP4.
 
-## Wymagania
+## Wymagania i zależności
 
-- Windows 10 lub 11
-- [Python 3.10+](https://www.python.org/downloads/windows/) – przy instalacji zaznacz
-  **„Add python.exe to PATH”** (instalator z python.org zawiera Tkinter domyślnie).
-
-Aplikacja nie ma zewnętrznych zależności – używa wyłącznie biblioteki standardowej Pythona.
+* Windows 10 lub 11.
+* Gotowy program (folder `Sortowanie`) zawiera wszystko – Python nie jest potrzebny.
+* Uruchomienie ze źródeł: [Python 3.10+](https://www.python.org/downloads/windows/) oraz
+  `requirements.txt`:
+  * **PySide6** (Qt 6) – interfejs, QtWebEngine (mapa Leaflet), QtMultimedia (odtwarzacz).
+* Do budowania: `requirements-dev.txt` (PyInstaller). Leaflet jest w repozytorium – nie trzeba
+  niczego pobierać z CDN.
 
 ## Uruchomienie ze źródeł
 
 ```bat
 git clone https://github.com/skipperpvp-sudo/Sortowanie.git
 cd Sortowanie
+py -m pip install -r requirements.txt
 py main.py
 ```
 
-Alternatywnie: `py -m sortowanie`.
+Opcje: `py main.py <folder_karty>` (od razu wczytuje import), `--mapa` (otwiera zakładkę mapy),
+`--skanuj` (od razu rozpoczyna skanowanie). Przykładowe dane do wypróbowania:
+`py narzedzia\dane_demo.py C:\Temp\demo`.
 
 ### Jak używać
 
-1. **Import** – wybierz kartę pamięci lub folder z materiałami i kliknij „Wczytaj”.
-2. **Archiwum** – wybierz folder docelowy (np. `D:\Archiwum dron`).
-3. Wybierz zakres: wszystkie materiały albo zaznaczone grupy.
-4. Zaznacz kategorię i uzupełnij pola formularza – obserwuj podgląd struktury.
-5. Kliknij **„Przenieś materiały”**.
+**Sortowanie:** wybierz kartę i kliknij „Wczytaj”, wybierz folder archiwum, zaznacz kategorię
+i uzupełnij pola formularza (podgląd struktury aktualizuje się na żywo), kliknij „Przenieś materiały”.
 
-## Budowanie pliku .exe
+**Mapa materiałów:** kliknij „Skanuj komputer” (lub najpierw „Ustawienia skanowania…”), potem
+filtruj, klikaj punkty i trasy, a szczegóły oglądaj w prawym panelu.
 
-Najprościej – uruchom skrypt z folderu projektu:
+## Budowanie programu
 
 ```bat
 build.bat
 ```
 
-Skrypt automatycznie:
+Skrypt tworzy `.venv`, instaluje zależności, uruchamia testy i buduje folder
+**`dist\Sortowanie\`** z plikiem `Sortowanie.exe`. Aplikacja jest budowana jako folder (nie jeden
+plik), bo QtWebEngine ma ok. 200 MB i w trybie jednego pliku byłby rozpakowywany przy każdym starcie.
 
-1. tworzy środowisko wirtualne `.venv`,
-2. instaluje PyInstaller (`requirements-dev.txt`),
-3. uruchamia testy,
-4. buduje plik **`dist\Sortowanie.exe`** (jeden plik, bez okna konsoli).
-
-Gotowy `Sortowanie.exe` można skopiować na dowolny komputer z Windows – nie wymaga
-zainstalowanego Pythona.
-
-### Budowanie ręczne
+Ręcznie:
 
 ```bat
 py -m venv .venv
@@ -192,18 +279,16 @@ pip install -r requirements-dev.txt
 pyinstaller --clean --noconfirm sortowanie.spec
 ```
 
-Własną ikonę dodasz, umieszczając plik `.ico` w `assets\` i odkomentowując linię
-`icon=...` w `sortowanie.spec`.
-
-> **Uwaga:** Windows Defender / SmartScreen może ostrzegać przed nowym, niepodpisanym
-> plikiem `.exe`. To typowe dla programów zbudowanych PyInstallerem. Kliknij
-> „Więcej informacji” → „Uruchom mimo to” lub podpisz plik certyfikatem.
-
 ## Testy
 
 ```bat
 py -m unittest discover -s tests -t .
 ```
+
+Testy obejmują m.in. parser SRT (formaty DJI, luki, skoki, okno 3 s), katalog i skaner (pary JPG/DNG,
+brak/uszkodzony SRT, przyrostowe skanowanie, anulowanie i wznowienie, brak uprawnień, dowiązania,
+odłączony dysk, przeniesienie i cofnięcie, wydajność na 60 tys. materiałów), filtry, białą listę
+zasobów mapy oraz – tylko na Windows – punkty połączeń, ukryte foldery i listę dysków.
 
 ## Struktura projektu
 
@@ -211,8 +296,13 @@ py -m unittest discover -s tests -t .
 Sortowanie/
 ├── main.py               # punkt startowy (również dla PyInstaller)
 ├── sortowanie/
-│   ├── gui.py            # główne okno: import, kategorie, formularze, podgląd
-│   ├── widgets.py        # kalendarz i okno ustawień
+│   ├── ui/               # interfejs PySide6: app, sort_tab, map_tab, preview_panel, webmap, dialogs
+│   ├── web/              # strona mapy (map.html/js/css) i Leaflet 1.9.4 (lokalnie)
+│   ├── catalog.py        # lokalny katalog materiałów (SQLite)
+│   ├── scanner.py        # skanowanie dysków w tle
+│   ├── srt.py            # parser SRT: pełna trasa (mapa) i 3 s (sortowanie)
+│   ├── preview.py        # podgląd DNG, Eksplorator, aplikacja domyślna
+│   ├── tiles.py          # konfiguracja dostawcy podkładu mapy
 │   ├── planner.py        # kategorie, walidacja, struktura folderów
 │   ├── media.py          # wczytywanie importu i grupowanie powiązanych plików
 │   ├── metadata.py       # odczyt GPS i daty (EXIF, SRT, MP4)
@@ -236,6 +326,10 @@ Plik `.gitignore` wyklucza z repozytorium:
 - klucze API i sekrety (`.env`, `*.key`, `*.pem`, `secrets.*`, `credentials*.json`, …),
 - prywatne materiały i dane robocze (`prywatne/`, `private/`, `dane/`, `data/`, `wyniki/`, `output/`, `logs/`),
 - lokalne dane aplikacji (`ustawienia.json`, `cache_osm.json`, `decyzje_lokalizacji.json`, `historia_sortowania.json`),
+- lokalny indeks materiałów, miniatury i cache mapy (`*.sqlite`, `miniatury/`, `kafelki/`).
+
+Dane programu na komputerze: `%APPDATA%\Sortowanie\` (ustawienia, decyzje, historia, cache OSM)
+oraz `%LOCALAPPDATA%\Sortowanie\` (`katalog.sqlite`, `miniatury\`, `przegladarka\` – cache kafelków).
 - cache Pythona i narzędzi (`__pycache__/`, `.pytest_cache/`, …),
 - środowiska wirtualne (`.venv/`),
 - pliki wynikowe budowania (`build/`, `dist/`, `*.exe`).
