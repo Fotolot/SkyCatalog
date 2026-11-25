@@ -53,7 +53,7 @@ a = Analysis(
 before = len(a.binaries) + len(a.datas)
 a.binaries = [e for e in a.binaries if keep(e)]
 a.datas = [e for e in a.datas if keep(e)]
-print(f"[SkyCatalog] pominięto {before - len(a.binaries) - len(a.datas)} nieużywanych plików Qt")
+print(f"[SkyCatalog] pominieto {before - len(a.binaries) - len(a.datas)} nieuzywanych plikow Qt")  # ASCII: konsola Windows (cp1252)
 pyz = PYZ(a.pure)
 
 exe = EXE(
