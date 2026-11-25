@@ -301,7 +301,8 @@ if exist "%APP%\_backup" rmdir /s /q "%APP%\_backup"
 robocopy "%APP%" "%APP%\_backup" /E /R:2 /W:1 /NP /XD "%APP%\_backup" {xd} /XF {xf} >> "%LOG%"
 if errorlevel 4 goto backup_failed
 echo Kopiowanie nowej wersji >> "%LOG%"
-robocopy "%NEW%" "%APP%" /E /R:3 /W:2 /NP /XD {xd} /XF {xf} >> "%LOG%"
+rem /IS /IT: kopiuj takze pliki o tym samym rozmiarze i dacie (robocopy domyslnie je pomija)
+robocopy "%NEW%" "%APP%" /E /IS /IT /R:3 /W:2 /NP /XD {xd} /XF {xf} >> "%LOG%"
 rem kody robocopy: 0-3 = OK, 4 = konflikt plik/folder (niepelna kopia), 8+ = bledy
 if errorlevel 4 goto restore
 echo Aktualizacja zakonczona >> "%LOG%"
@@ -309,7 +310,7 @@ start "" "%APP%\%EXE%"
 exit /b 0
 :restore
 echo BLAD kopiowania - przywracanie poprzedniej wersji z _backup >> "%LOG%"
-robocopy "%APP%\_backup" "%APP%" /E /R:3 /W:2 /NP >> "%LOG%"
+robocopy "%APP%\_backup" "%APP%" /E /IS /IT /R:3 /W:2 /NP >> "%LOG%"
 start "" "%APP%\%EXE%" {failed}
 exit /b 1
 :backup_failed
