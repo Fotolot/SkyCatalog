@@ -1,0 +1,72 @@
+name: Budowanie Sortowanie.exe (Windows)
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalacja PyInstaller
+        run: python -m pip install -r requirements-dev.txt
+
+      - name: Testy
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Budowanie .exe
+        run: python -m PyInstaller --clean --noconfirm sortowanie.spec
+
+      - name: Zrzut ekranu okna aplikacji
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $env:APPDATA = "$env:RUNNER_TEMP\appdata"
+          # Przykładowa „karta pamięci” z syntetycznymi plikami (bez GPS z sieci – tryb offline)
+          New-Item -ItemType Directory -Force "$env:APPDATA\Sortowanie" | Out-Null
+          '{"offline": true}' | Set-Content -Encoding utf8 "$env:APPDATA\Sortowanie\ustawienia.json"
+          python -c "from pathlib import Path; from tests.helpers import make_jpeg, make_mp4, DJI_SRT; d=Path(r'$env:RUNNER_TEMP\karta\DCIM\100MEDIA'); make_mp4(d/'DJI_0001.MP4'); (d/'DJI_0001.SRT').write_text(DJI_SRT.format(lat=50.027082, lon=22.003366), encoding='utf-8'); (d/'DJI_0001.LRF').write_bytes(b'x'); make_jpeg(d/'DJI_0002.JPG', 50.040451, 21.99913, '2026:11:11 10:00:00'); (d/'DJI_0002.DNG').write_bytes(b'x'); make_jpeg(d/'DJI_0003.JPG', None, None, '2026:11:11 11:00:00')"
+          $p = Start-Process -FilePath "dist\Sortowanie.exe" -ArgumentList "`"$env:RUNNER_TEMP\karta`"" -PassThru
+          Start-Sleep -Seconds 15
+          Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+          $g = [System.Drawing.Graphics]::FromImage($bmp)
+          $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+          New-Item -ItemType Directory -Force zrzuty | Out-Null
+          $bmp.Save("zrzuty\okno.png", [System.Drawing.Imaging.ImageFormat]::Png)
+          "Proces działa: $(-not $p.HasExited)" | Tee-Object zrzuty\stan.txt
+          if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          # Zmniejszony zrzut w logu (base64) – podgląd bez pobierania artefaktu
+          $w = [int]($b.Width * 0.75); $h = [int]($b.Height * 0.75)
+          $small = New-Object System.Drawing.Bitmap $bmp, $w, $h
+          $ms = New-Object System.IO.MemoryStream
+          $small.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+          $b64 = [Convert]::ToBase64String($ms.ToArray())
+          "ZRZUT-BASE64-START"
+          for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
+          "ZRZUT-BASE64-END"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Sortowanie-exe
+          path: dist/Sortowanie.exe
+          retention-days: 14
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zrzut-ekranu
+          path: zrzuty/
+          if-no-files-found: ignore
+          retention-days: 14

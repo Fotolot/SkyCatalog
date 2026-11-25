@@ -1,0 +1,3 @@
+# Zależności potrzebne tylko do zbudowania pliku .exe.
+# Sama aplikacja korzysta wyłącznie z biblioteki standardowej Pythona.
+pyinstaller>=6.10
