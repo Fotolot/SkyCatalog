@@ -68,6 +68,20 @@ Zasady:
 - **Bezpieczeństwo** – istniejące pliki nigdy nie są nadpisywane; ostatni import można
   cofnąć przyciskiem „Cofnij ostatni import”.
 
+## Import z karty SD
+
+* Po włożeniu karty pamięci (dysk wymienny z folderem `DCIM`) nad zakładką sortowania pojawia się
+  pasek „Wykryto kartę pamięci…”. **Importuj z karty** wczytuje materiały z karty w trybie kopiowania.
+* Lista pokazuje tylko **nowe** materiały – pliki skopiowane wcześniej (lub już obecne w archiwum
+  pod tą samą nazwą, z tym samym rozmiarem i czasem zapisu) są ukryte. Pole **Pokaż także materiały
+  już zaimportowane** pokazuje je z dopiskiem „(już w archiwum)”.
+* Po wybraniu kategorii i uzupełnieniu formularza **Kopiuj do archiwum** kopiuje pliki: najpierw do
+  pliku tymczasowego, potem po sprawdzeniu rozmiaru pod docelową nazwę (z zachowaniem daty). Przerwana
+  kopia nie zostawia uszkodzonych plików, istniejące pliki nigdy nie są nadpisywane, a na karcie
+  nic nie jest zmieniane ani usuwane – po zakończeniu kartę można bezpiecznie wysunąć.
+* **Cofnij ostatni import** po kopiowaniu usuwa wyłącznie utworzone kopie (oryginały zostają).
+* Tryb **Przenieś / Kopiuj** można też wybrać ręcznie dla dowolnego folderu importu; wybór jest zapamiętywany.
+
 ## Mapa materiałów
 
 ### Skanowanie komputera
