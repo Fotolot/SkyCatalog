@@ -8,7 +8,7 @@ a = Analysis(
     binaries=[],
     datas=[],
     hiddenimports=[],
-    excludes=["unittest", "pydoc", "test"],
+    excludes=["pydoc", "test"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)
