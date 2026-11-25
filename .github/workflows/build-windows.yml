@@ -32,7 +32,11 @@ jobs:
         shell: pwsh
         run: |
           $env:APPDATA = "$env:RUNNER_TEMP\appdata"
-          $p = Start-Process -FilePath "dist\Sortowanie.exe" -PassThru
+          # Przykładowa „karta pamięci” z syntetycznymi plikami (bez GPS z sieci – tryb offline)
+          New-Item -ItemType Directory -Force "$env:APPDATA\Sortowanie" | Out-Null
+          '{"offline": true}' | Set-Content -Encoding utf8 "$env:APPDATA\Sortowanie\ustawienia.json"
+          python -c "from pathlib import Path; from tests.helpers import make_jpeg, make_mp4, DJI_SRT; d=Path(r'$env:RUNNER_TEMP\karta\DCIM\100MEDIA'); make_mp4(d/'DJI_0001.MP4'); (d/'DJI_0001.SRT').write_text(DJI_SRT.format(lat=50.027082, lon=22.003366), encoding='utf-8'); (d/'DJI_0001.LRF').write_bytes(b'x'); make_jpeg(d/'DJI_0002.JPG', 50.040451, 21.99913, '2026:11:11 10:00:00'); (d/'DJI_0002.DNG').write_bytes(b'x'); make_jpeg(d/'DJI_0003.JPG', None, None, '2026:11:11 11:00:00')"
+          $p = Start-Process -FilePath "dist\Sortowanie.exe" -ArgumentList "`"$env:RUNNER_TEMP\karta`"" -PassThru
           Start-Sleep -Seconds 15
           Add-Type -AssemblyName System.Windows.Forms, System.Drawing
           $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds

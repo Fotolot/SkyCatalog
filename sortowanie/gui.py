@@ -123,8 +123,7 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_NAME} {__version__} – archiwizacja materiałów z lotów")
-        self.geometry("1320x820")
-        self.minsize(1050, 680)
+        self._fit_to_screen()
 
         self.settings = Settings()
         self.cache = OsmCache()
@@ -175,6 +174,18 @@ class App(tk.Tk):
         self._refresh_undo_button()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(100, self._poll_events)
+
+    def _fit_to_screen(self) -> None:
+        """Rozmiar okna dopasowany do ekranu (także małe ekrany i skalowanie Windows)."""
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        w, h = min(1320, sw - 40), min(840, sh - 80)
+        self.minsize(min(900, sw - 40), min(600, sh - 80))
+        self.geometry(f"{w}x{h}+{max((sw - w) // 2, 0)}+{max((sh - h) // 3, 0)}")
+        if sw < 1280 or sh < 800:
+            try:
+                self.state("zoomed")   # Windows: zmaksymalizuj na małym ekranie
+            except tk.TclError:
+                pass
 
     # ══ Budowa interfejsu ══════════════════════════════════════
 
@@ -249,11 +260,11 @@ class App(tk.Tk):
         cat.grid(row=0, column=0, sticky="ew")
         scope = ttk.Frame(cat)
         scope.pack(fill=tk.X)
-        ttk.Label(scope, text="Przypisz do:").pack(side=tk.LEFT)
+        ttk.Label(scope, text="Przypisz do:").grid(row=0, column=0, sticky="nw")
         ttk.Radiobutton(scope, text="wszystkich materiałów z importu", value=SCOPE_ALL,
-                        variable=self.scope_var, command=self._sync_form).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Radiobutton(scope, text="zaznaczonych grup", value=SCOPE_SELECTED,
-                        variable=self.scope_var, command=self._sync_form).pack(side=tk.LEFT, padx=(6, 0))
+                        variable=self.scope_var, command=self._sync_form).grid(row=0, column=1, sticky="w", padx=(6, 0))
+        ttk.Radiobutton(scope, text="zaznaczonych grup na liście", value=SCOPE_SELECTED,
+                        variable=self.scope_var, command=self._sync_form).grid(row=1, column=1, sticky="w", padx=(6, 0))
 
         boxes = ttk.Frame(cat)
         boxes.pack(fill=tk.X, pady=(8, 0))
@@ -263,7 +274,7 @@ class App(tk.Tk):
             cb = ttk.Checkbutton(boxes, text=label, variable=self.category_var, onvalue=key,
                                  offvalue=NO_CATEGORY, command=self._on_category_clicked,
                                  style="Category.TCheckbutton")
-            cb.pack(side=tk.LEFT, padx=(0, 18))
+            cb.pack(side=tk.LEFT, padx=(0, 14))
             self.category_buttons.append(cb)
         info = ttk.Frame(cat)
         info.pack(fill=tk.X, pady=(6, 0))
@@ -1166,5 +1177,12 @@ class App(tk.Tk):
 
 
 def main() -> None:
+    """Uruchomienie: ``Sortowanie.exe [folder_importu]`` – folder (np. przeciągnięty na ikonę
+    programu) zostanie od razu wczytany."""
     _enable_high_dpi()
-    App().mainloop()
+    app = App()
+    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    if args and Path(args[0]).is_dir():
+        app.source_var.set(str(Path(args[0])))
+        app.after(300, app._load_source)
+    app.mainloop()
