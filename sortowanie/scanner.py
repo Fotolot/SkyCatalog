@@ -292,7 +292,8 @@ class Scanner:
                 self.catalog.add_skip(prog.run, entry.path, SKIP_EXCLUDED)
                 prog.skipped += 1
                 return
-            if attrs & (FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN) or (sys.platform != "win32" and entry.name.startswith(".")):
+            # ukryte/systemowe (atrybut Windows) oraz foldery narzędzi zaczynające się od kropki
+            if attrs & (FILE_ATTRIBUTE_SYSTEM | FILE_ATTRIBUTE_HIDDEN) or entry.name.startswith("."):
                 self.catalog.add_skip(prog.run, entry.path, SKIP_SYSTEM)
                 prog.skipped += 1
                 return
