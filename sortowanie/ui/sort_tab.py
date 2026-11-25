@@ -482,6 +482,7 @@ class SortTab(QWidget):
     def _on_mode_changed(self) -> None:
         self.settings.set("import_mode", core.MODE_COPY if self.mode_copy.isChecked() else core.MODE_MOVE)
         self.move_btn.setText("Kopiuj do archiwum" if self.mode_copy.isChecked() else "Przenieś materiały")
+        self._schedule_refresh()
 
     def _apply_imported_filter(self) -> None:
         if not self.all_groups:
@@ -1054,7 +1055,8 @@ class SortTab(QWidget):
         shown = errors[:6] + ([f"… i {len(errors) - 6} więcej"] if len(errors) > 6 else [])
         if not errors and self.plan.ready:
             n = len(self.plan.moves)
-            self.errors_label.setText(f"Gotowe do przeniesienia: {n} {files_word(n)}.")
+            verb = "skopiowania" if self.mode_copy.isChecked() else "przeniesienia"
+            self.errors_label.setText(f"Gotowe do {verb}: {n} {files_word(n)}.")
             self.errors_label.setStyleSheet("color: #2e7d32;")
         else:
             self.errors_label.setText("\n".join(f"• {e}" for e in shown))

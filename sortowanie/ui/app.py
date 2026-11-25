@@ -28,8 +28,17 @@ QSplitter::handle:hover, QSplitter::handle:pressed { background: palette(highlig
 
 
 def apply_theme(app: QApplication, mode: str) -> bool:
-    """Ustawia motyw („systemowy” / „jasny” / „ciemny”). Zwraca True dla ciemnego."""
+    """Ustawia motyw („systemowy” / „jasny” / „ciemny”). Zwraca True dla ciemnego.
+
+    Działa także w trakcie pracy programu: arkusz stylów jest ustawiany na końcu, co wymusza
+    ponowne odświeżenie wszystkich widżetów nową paletą."""
+    dark = _apply_palette(app, mode)
+    app.setStyleSheet("")
     app.setStyleSheet(SPLITTER_STYLE)
+    return dark
+
+
+def _apply_palette(app: QApplication, mode: str) -> bool:
     if mode == "systemowy":
         app.setStyle(QStyleFactory.create("windowsvista") or QStyleFactory.create("Fusion"))
         app.setPalette(app.style().standardPalette())
