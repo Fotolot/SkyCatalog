@@ -43,6 +43,15 @@ jobs:
           $bmp.Save("zrzuty\okno.png", [System.Drawing.Imaging.ImageFormat]::Png)
           "Proces działa: $(-not $p.HasExited)" | Tee-Object zrzuty\stan.txt
           if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          # Zmniejszony zrzut w logu (base64) – podgląd bez pobierania artefaktu
+          $w = [int]($b.Width * 0.75); $h = [int]($b.Height * 0.75)
+          $small = New-Object System.Drawing.Bitmap $bmp, $w, $h
+          $ms = New-Object System.IO.MemoryStream
+          $small.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+          $b64 = [Convert]::ToBase64String($ms.ToArray())
+          "ZRZUT-BASE64-START"
+          for ($i = 0; $i -lt $b64.Length; $i += 4000) { $b64.Substring($i, [Math]::Min(4000, $b64.Length - $i)) }
+          "ZRZUT-BASE64-END"
 
       - uses: actions/upload-artifact@v4
         with:
