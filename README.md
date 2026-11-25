@@ -4,6 +4,24 @@ Desktopowa aplikacja dla Windows do archiwizacji materiałów z lotów (dron, ka
 wczytujesz kartę pamięci, **ręcznie** przypisujesz kategorię, a aplikacja przenosi
 filmy i zdjęcia do uporządkowanej struktury folderów.
 
+![Okno aplikacji Sortowanie](docs/zrzut-okna.png)
+
+## Pobierz gotowy program (.exe)
+
+Plik `Sortowanie.exe` jest budowany automatycznie na Windows (GitHub Actions) przy każdej
+zmianie w repozytorium:
+
+1. Wejdź w zakładkę [**Actions**](https://github.com/skipperpvp-sudo/Sortowanie/actions)
+   i otwórz najnowsze zakończone budowanie „Budowanie Sortowanie.exe (Windows)”.
+2. Na dole strony, w sekcji **Artifacts**, kliknij **Sortowanie-exe** (wymaga zalogowania na GitHubie).
+3. Rozpakuj ZIP i uruchom `Sortowanie.exe` – nie wymaga instalacji Pythona.
+
+Windows SmartScreen może ostrzec przed nieznanym programem (plik nie jest podpisany):
+„Więcej informacji” → „Uruchom mimo to”.
+
+Folder z kartą pamięci możesz przeciągnąć na ikonę `Sortowanie.exe` – zostanie od razu wczytany
+(odpowiada to uruchomieniu `Sortowanie.exe <folder>`).
+
 ## Kategorie lotów
 
 Kategorię zawsze wybiera użytkownik – aplikacja jej nie zgaduje. Pola wyboru wyglądają
