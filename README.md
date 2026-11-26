@@ -72,6 +72,22 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
     i docelowa, ścieżki programu i procesu aktualizującego, PID-y, wynik uruchomienia, kody wyjścia
     (robocopy, procesy) i błędy.
   * **Później** – zamyka okno; można sprawdzić ponownie w **O programie → Sprawdź aktualizacje**.
+  * **Testy**: CI na Windows przy każdej zmianie buduje wersję 0.9.0 z tego samego kodu, instaluje ją
+    w folderze ze spacją, `&` i apostrofem w nazwie, uruchamia ją i pozwala jej zaktualizować się do
+    właśnie zbudowanej paczki. Sprawdza: wynik „ok”, wersję w metadanych nowego `.exe`, kopię
+    zapasową z wersją 0.9.0, potwierdzenie wersji przez uruchomiony program, nienaruszone dane
+    użytkownika i wykrycie skrótu do innej kopii programu. Proces aktualizujący jest też testowany
+    osobno (plik zablokowany, błąd kopiowania, zła wersja, nowa wersja się nie uruchamia).
+    **Nie da się tam sprawdzić okna UAC** (maszyna CI działa jako administrator bez pytań).
+  * **Ręczny test UAC i Eksploratora** (Windows z włączonym UAC):
+    1. rozpakuj starszą wersję do `C:\Program Files\SkyCatalog` (wymaga administratora),
+    2. uruchom ją jako zwykły użytkownik → **O programie → Sprawdź aktualizacje → Aktualizuj**
+       → **Zainstaluj i uruchom ponownie**,
+    3. w oknie UAC kliknij **Nie** → program uruchamia się ponownie w starej wersji z komunikatem
+       „Anulowano zgodę administratora”; folder bez zmian,
+    4. powtórz i kliknij **Tak** → uruchamia się nowa wersja (zwykły użytkownik, nie administrator –
+       sprawdź w Menedżerze zadań, kolumna „Podniesiony”), komunikat „Zaktualizowano do wersji X”,
+    5. w dzienniku `%LOCALAPPDATA%\SkyCatalog\logs\aktualizacja.log` sprawdź wersje, PID-y i wynik.
 * **Dane użytkownika nie są zmieniane przez aktualizację.** Program trzyma je poza folderem `.exe`:
   * `%APPDATA%\SkyCatalog\` – `ustawienia.json`, `decyzje_lokalizacji.json`,
     `historia_sortowania.json`, `cache_osm.json`,
