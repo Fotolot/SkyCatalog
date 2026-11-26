@@ -380,12 +380,16 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertFalse((self.app / "_backup").exists())
 
     def test_copy_error_restores_previous_version(self):
-        (self.app / "konflikt").write_text("plik", encoding="utf-8")
-        (self.new / "konflikt").mkdir()                 # w nowej wersji folder o tej nazwie
-        (self.new / "konflikt" / "x.txt").write_text("x", encoding="utf-8")
+        # w nowej wersji folder o nazwie chronionego pliku użytkownika, który zostaje w folderze
+        # programu – robocopy nie może go utworzyć (błąd kopiowania)
+        (self.new / "ustawienia.json").unlink()
+        (self.new / "ustawienia.json").mkdir()
+        (self.new / "ustawienia.json" / "x.txt").write_text("x", encoding="utf-8")
         code, result, log = self.run_helper()
         self.assertEqual(result["status"], "blad_instalacji", log)
         self.assertEqual(self.lib(), "v1", log)
+        self.assertEqual((self.app / "ustawienia.json").read_text(encoding="utf-8"), "dane użytkownika")
+        self.assertTrue((self.app / "SkyCatalog.exe").exists())
         self.assertIn("Uruchamianie poprzedniej wersji", log)
 
     def test_wrong_version_in_package_is_rolled_back(self):

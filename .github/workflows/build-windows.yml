@@ -67,6 +67,15 @@ jobs:
           "Rozmiar folderu: {0:N0} MB" -f $size
           Get-ChildItem dist\SkyCatalog -Recurse -File | Sort-Object Length -Descending | Select-Object -First 12 |
             ForEach-Object { "{0,8:N1} MB  {1}" -f ($_.Length / 1MB), $_.FullName.Substring((Resolve-Path dist\SkyCatalog).Path.Length) }
+          # Nazwy zarezerwowane dla danych użytkownika nie mogą występować w plikach programu –
+          # aktualizacja je pomija (updater.PROTECTED_DIRS / PROTECTED_FILES)
+          $protDirs = python -c "import sortowanie.updater as u;print(chr(10).join(u.PROTECTED_DIRS))"
+          $protFiles = python -c "import sortowanie.updater as u;print(chr(10).join(u.PROTECTED_FILES))"
+          $clash = @(Get-ChildItem dist\SkyCatalog\_internal -Recurse -Force | Where-Object {
+            $item = $_
+            if ($item.PSIsContainer) { $protDirs -contains $item.Name }
+            else { @($protFiles | Where-Object { $item.Name -like $_ }).Count -gt 0 } })
+          if ($clash.Count) { $clash | ForEach-Object { $_.FullName }; throw "Pliki programu mają nazwy zarezerwowane dla danych użytkownika" }
           $exe = Get-Item dist\SkyCatalog\SkyCatalog.exe
           "Wersja w metadanych .exe: $($exe.VersionInfo.FileVersion) / $($exe.VersionInfo.ProductVersion)"
           if ($exe.VersionInfo.ProductVersion -ne $env:APP_VERSION) { throw "Metadane .exe nie zawierają wersji $env:APP_VERSION" }
@@ -134,6 +143,7 @@ jobs:
 
       - name: Test aktualizacji end-to-end (stara wersja 0.9.0 -> nowa)
         shell: pwsh
+        timeout-minutes: 20
         run: |
           $ErrorActionPreference = "Stop"
           $zip = (Resolve-Path SkyCatalog-portable.zip).Path
@@ -165,14 +175,28 @@ jobs:
           "Stara wersja uruchomiona, pid $($p.Id)"
           $work = Join-Path $env:TEMP "SkyCatalog-aktualizacja-$env:APP_VERSION"
           $resultFile = Join-Path $work "wynik.json"
-          $deadline = (Get-Date).AddMinutes(8)
-          while ((Get-Date) -lt $deadline -and -not (Test-Path $resultFile)) { Start-Sleep 2 }
-          # nowa wersja kończy się sama po odczycie wyniku (tryb testu)
-          $until = (Get-Date).AddMinutes(2)
-          while ((Get-Date) -lt $until -and (Test-Path "$env:LOCALAPPDATA\SkyCatalog\aktualizacja_oczekuje.json")) { Start-Sleep 1 }
           $log = "$env:LOCALAPPDATA\SkyCatalog\logs\aktualizacja.log"
-          "===== Dziennik aktualizacji ====="
-          if (Test-Path $log) { Get-Content $log } else { "(brak dziennika)" }
+          try {
+            $deadline = (Get-Date).AddMinutes(12)
+            $tick = Get-Date
+            while ((Get-Date) -lt $deadline -and -not (Test-Path $resultFile)) {
+              Start-Sleep 2
+              if (((Get-Date) - $tick).TotalSeconds -ge 30) {
+                $tick = Get-Date
+                $last = if (Test-Path $log) { (Get-Content $log -Tail 1) } else { "(brak dziennika)" }
+                "[{0:HH:mm:ss}] czekam na wynik… ostatni wpis: {1}" -f (Get-Date), $last
+              }
+            }
+            # nowa wersja kończy się sama po odczycie wyniku (tryb testu)
+            $until = (Get-Date).AddMinutes(2)
+            while ((Get-Date) -lt $until -and (Test-Path "$env:LOCALAPPDATA\SkyCatalog\aktualizacja_oczekuje.json")) { Start-Sleep 1 }
+          } finally {
+            "===== Dziennik aktualizacji ====="
+            if (Test-Path $log) { Get-Content $log | Where-Object { $_ -notmatch "robocopy:" } } else { "(brak dziennika)" }
+            "===== Procesy ====="
+            Get-Process | Where-Object { $_.ProcessName -match "SkyCatalog|QtWebEngine|powershell|robocopy" } |
+              ForEach-Object { "{0} pid {1} {2}" -f $_.ProcessName, $_.Id, $(try { $_.Path } catch { "" }) }
+          }
           if (-not (Test-Path $resultFile)) { throw "Brak wyniku aktualizacji" }
           $r = Get-Content $resultFile -Raw | ConvertFrom-Json
           "Wynik: $($r | ConvertTo-Json -Compress)"

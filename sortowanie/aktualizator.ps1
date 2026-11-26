@@ -35,7 +35,8 @@ function Is-Elevated {
 }
 
 function Run-Robocopy([string]$from, [string]$to, [string[]]$extra) {
-    $rc = @($from, $to, "/E", "/IS", "/IT", "/R:5", "/W:2", "/NP", "/NJH", "/NJS", "/NDL") + $extra
+    # /MT:8 - kopiowanie wielowatkowe; /NFL /NDL - w dzienniku tylko bledy i podsumowanie
+    $rc = @($from, $to, "/E", "/IS", "/IT", "/R:3", "/W:2", "/MT:8", "/NP", "/NFL", "/NDL", "/NJH") + $extra
     $out = & robocopy.exe @rc 2>&1
     $code = $LASTEXITCODE
     foreach ($l in $out) { if ("$l".Trim()) { Log ("  robocopy: " + "$l".Trim()) } }
@@ -49,17 +50,47 @@ function Exclusions {
     return $xd + $xf
 }
 
+function Is-Protected($item) {
+    # Dane uzytkownika obok programu - nigdy nie sa przenoszone, kopiowane ani usuwane
+    if ($item.PSIsContainer) { return @($p.protected_dirs) -contains $item.Name }
+    foreach ($pattern in $p.protected_files) { if ($item.Name -like $pattern) { return $true } }
+    return $false
+}
+
 function Product-Version([string]$path) {
     try { return ((Get-Item -LiteralPath $path).VersionInfo.ProductVersion + "").Trim() } catch { return "" }
 }
 
+function Program-Items {
+    return @(Get-ChildItem -LiteralPath $app -Force | Where-Object { $_.Name -ine "_backup" -and -not (Is-Protected $_) })
+}
+
 function Restore-Backup {
+    # Usuwa pliki nowej wersji i przenosi poprzednia wersje z _backup z powrotem (ten sam dysk - szybko)
     if (-not (Test-Path -LiteralPath (Join-Path $backup $p.exe_name))) {
         Log "BLAD: brak kopii zapasowej do przywrocenia"
         return 99
     }
     Log "Przywracanie poprzedniej wersji z _backup"
-    return (Run-Robocopy $backup $app @("/XD", $backup))
+    $errors = 0
+    foreach ($item in Program-Items) {
+        try { Remove-Item -LiteralPath $item.FullName -Recurse -Force }
+        catch { $errors++; Log ("  nie usunieto " + $item.FullName + ": " + $_.Exception.Message) }
+    }
+    foreach ($item in @(Get-ChildItem -LiteralPath $backup -Force | Where-Object { $_.Name -ne "PRZYWROC_POPRZEDNIA_WERSJE.cmd" })) {
+        $dest = Join-Path $app $item.Name
+        try {
+            if (Test-Path -LiteralPath $dest) { Remove-Item -LiteralPath $dest -Recurse -Force }
+            Move-Item -LiteralPath $item.FullName -Destination $dest
+        } catch { $errors++; Log ("  nie przywrocono " + $item.Name + ": " + $_.Exception.Message) }
+    }
+    if ($errors -gt 0) {
+        # awaryjnie: kopia plikow, ktorych nie udalo sie przeniesc
+        $code = Run-Robocopy $backup $app @("/XF", "PRZYWROC_POPRZEDNIA_WERSJE.cmd")
+        if ($code -ge 4) { return $code }
+    }
+    Log "Poprzednia wersja przywrocona"
+    return 0
 }
 
 # --- Instalacja (w biezacym procesie albo w procesie z uprawnieniami administratora) ---
@@ -69,13 +100,30 @@ function Install {
         try { Remove-Item -LiteralPath $backup -Recurse -Force }
         catch { Log ("BLAD: nie mozna usunac starej kopii zapasowej: " + $_.Exception.Message); return @{ status = "blad_kopii"; kod = 98 } }
     }
-    $code = Run-Robocopy $app $backup (Exclusions)
-    if ($code -ge 4) { Log "BLAD kopii zapasowej - nic nie zmieniono"; return @{ status = "blad_kopii"; kod = $code } }
+    New-Item -ItemType Directory -Path $backup | Out-Null
+    # 1. Kopia zapasowa przez przeniesienie (zmiana nazwy na tym samym dysku - bez ponownego zapisu plikow)
+    $moved = @()
+    foreach ($item in Program-Items) {
+        try {
+            Move-Item -LiteralPath $item.FullName -Destination (Join-Path $backup $item.Name)
+            $moved += $item.Name
+        } catch {
+            Log ("BLAD kopii zapasowej - nie mozna przeniesc " + $item.FullName + ": " + $_.Exception.Message)
+            foreach ($name in $moved) {
+                try { Move-Item -LiteralPath (Join-Path $backup $name) -Destination (Join-Path $app $name) }
+                catch { Log ("  nie cofnieto " + $name + ": " + $_.Exception.Message) }
+            }
+            try { Remove-Item -LiteralPath $backup -Recurse -Force } catch { }
+            return @{ status = "pliki_zablokowane"; kod = 5; blad = $_.Exception.Message }
+        }
+    }
+    Log ("Kopia zapasowa w _backup (przeniesiono: {0})" -f ($moved -join ", "))
     $restoreCmd = "@echo off`r`nrem Przywraca poprzednia wersje SkyCatalog z tego folderu.`r`nrobocopy `"%~dp0.`" `"%~dp0..`" /E /IS /IT /R:3 /W:2 /XD `"%~dp0.`"`r`npause`r`n"
     try { [IO.File]::WriteAllText((Join-Path $backup "PRZYWROC_POPRZEDNIA_WERSJE.cmd"), $restoreCmd, [Text.Encoding]::ASCII) } catch { }
+    # 2. Nowa wersja do pustego miejsca (bez mieszania starych i nowych bibliotek)
     $code = Run-Robocopy $new $app (Exclusions)
     if ($code -ge 4) {
-        Log "BLAD kopiowania nowej wersji (plik zablokowany, brak miejsca lub uprawnien)"
+        Log "BLAD kopiowania nowej wersji (brak miejsca, uprawnien lub plik zablokowany)"
         $r = Restore-Backup
         return @{ status = "blad_instalacji"; kod = $code; przywrocono = ($r -lt 4) }
     }
