@@ -11,6 +11,14 @@ $app = $p.app_dir.TrimEnd('\')
 $new = $p.new_dir.TrimEnd('\')
 $exe = Join-Path $app $p.exe_name
 $backup = Join-Path $app "_backup"
+# Ten sam folder w postaci pelnej i krotkiej (8.3) - sciezka procesu moze byc w innej postaci
+$appVariants = @(@($app) + @($p.app_dir_variants | Where-Object { $_ }) | ForEach-Object { $_.TrimEnd('\') } | Select-Object -Unique)
+
+function Under-App([string]$path) {
+    if (-not $path) { return $false }
+    foreach ($v in $appVariants) { if ($path.StartsWith($v + '\', [StringComparison]::OrdinalIgnoreCase)) { return $true } }
+    return $false
+}
 
 function Log([string]$msg) {
     $line = "[{0}] [aktualizator {1} pid {2}] {3}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Mode, $PID, $msg
@@ -172,7 +180,7 @@ function Elevated-Stage([string]$stage) {
 
 function Running-From-App {
     return @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.Path -and $_.Path.StartsWith($app + '\', [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
+        try { Under-App $_.Path } catch { $false } })
 }
 
 function Can-Write([string]$dir) {
@@ -211,7 +219,8 @@ function Check-Shortcuts {
         foreach ($lnk in Get-ChildItem -LiteralPath $f -Filter *.lnk -Recurse -ErrorAction SilentlyContinue) {
             try { $t = $shell.CreateShortcut($lnk.FullName).TargetPath } catch { continue }
             if ($t -and [IO.Path]::GetFileName($t) -ieq $p.exe_name) {
-                if ([IO.Path]::GetFullPath($t) -ieq [IO.Path]::GetFullPath($exe)) { $ok += $lnk.FullName }
+                $dir = [IO.Path]::GetDirectoryName($t)
+                if (@($appVariants | Where-Object { $dir -ieq $_ }).Count -gt 0) { $ok += $lnk.FullName }
                 else { $stale += ("{0} -> {1}" -f $lnk.FullName, $t); Log ("UWAGA: skrot wskazuje inna kopie programu: {0} -> {1}" -f $lnk.FullName, $t) }
             }
         }

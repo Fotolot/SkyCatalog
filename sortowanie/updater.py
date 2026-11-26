@@ -412,12 +412,26 @@ def descendant_pids(root_pid: int) -> list[int]:
     return out
 
 
+def path_variants(path: Path) -> list[str]:
+    """Ta sama ścieżka w postaci podanej, pełnej i krótkiej (8.3) – Windows może zgłaszać ścieżkę
+    procesu w innej postaci niż ta, którą zna program."""
+    out = [str(path)]
+    if sys.platform == "win32":
+        import ctypes
+        for fn in ("GetLongPathNameW", "GetShortPathNameW"):
+            buf = ctypes.create_unicode_buffer(32768)
+            if getattr(ctypes.windll.kernel32, fn)(str(path), buf, len(buf)):
+                out.append(buf.value)
+    return list(dict.fromkeys(v.rstrip("\\/") for v in out if v))
+
+
 def write_helper_files(prep: PreparedUpdate, target: Path, pids: list[int]) -> tuple[Path, Path]:
     """Kopiuje skrypt pomocniczy do folderu roboczego i zapisuje jego parametry (JSON)."""
     script = prep.work / HELPER_NAME
     shutil.copyfile(helper_source(), script)
     params = {
-        "app_dir": str(target), "new_dir": str(prep.new_dir), "exe_name": EXE_NAME,
+        "app_dir": str(target), "app_dir_variants": path_variants(target),
+        "new_dir": str(prep.new_dir), "exe_name": EXE_NAME,
         "current_version": __version__, "target_version": prep.release.version,
         "pids": pids, "wait_seconds": WAIT_SECONDS, "confirm_seconds": CONFIRM_SECONDS,
         "log_path": str(log_path()), "result_path": str(prep.work / "wynik.json"),
