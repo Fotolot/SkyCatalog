@@ -170,6 +170,11 @@ function Elevated-Stage([string]$stage) {
     return $h
 }
 
+function Running-From-App {
+    return @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
+        try { $_.Path -and $_.Path.StartsWith($app + '\', [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
+}
+
 function Can-Write([string]$dir) {
     $probe = Join-Path $dir (".skycatalog_zapis_" + [Guid]::NewGuid().ToString("N"))
     try { [IO.File]::WriteAllText($probe, "x"); Remove-Item -LiteralPath $probe -Force; return $true } catch { return $false }
@@ -181,7 +186,7 @@ function Start-AsUser([string]$path, [string[]]$arguments) {
     $lua = 0
     try { $lua = (Get-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name EnableLUA -ErrorAction Stop).EnableLUA } catch { }
     $shell = @(Get-Process -Name explorer -ErrorAction SilentlyContinue).Count -gt 0
-    if ((Is-Elevated) -and $lua -eq 1 -and $shell) {
+    if ((Is-Elevated) -and $lua -eq 1 -and $shell -and -not $p.launch_direct) {
         Log "Pomocnik ma uprawnienia administratora - uruchomienie przez explorer.exe (kontekst uzytkownika)"
         Start-Process -FilePath "explorer.exe" -ArgumentList ('"' + $path + '"') | Out-Null
         return $null
@@ -233,13 +238,10 @@ try {
         }
     }
     while ((Get-Date) -lt $deadline) {
-        $busy = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-            try { $_.Path -and $_.Path.StartsWith($app + '\', [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
-        if ($busy.Count -eq 0) { break }
+        if ((Running-From-App).Count -eq 0) { break }
         Start-Sleep -Milliseconds 500
     }
-    $still = @(Get-Process -ErrorAction SilentlyContinue | Where-Object {
-        try { $_.Path -and $_.Path.StartsWith($app + '\', [StringComparison]::OrdinalIgnoreCase) } catch { $false } })
+    $still = Running-From-App
     if ($still.Count -gt 0) {
         $names = ($still | ForEach-Object { "{0} (pid {1})" -f $_.Path, $_.Id }) -join "; "
         Log ("BLAD: pliki programu sa nadal uzywane: " + $names)
@@ -294,8 +296,12 @@ try {
     if ($confirmed) { $why = "uruchomiony program raportuje wersje " + $confirmed.version }
     elseif ($started -and $started.HasExited) { $why = "nowa wersja zakonczyla sie z kodem " + $started.ExitCode }
     Log ("BLAD: " + $why)
-    if ($started -and -not $started.HasExited) {
-        # Program dziala, ale nie potwierdzil wersji - nie podmieniamy plikow w trakcie pracy.
+    $running = Running-From-App
+    if ($running.Count -gt 0) {
+        # Program z folderu dziala, ale nie potwierdzil wersji - nie podmieniamy plikow w trakcie pracy
+        # i nie uruchamiamy drugiej kopii.
+        Log ("Program dziala ({0}) - bez przywracania poprzedniej wersji; kopia zostaje w _backup" -f `
+            (($running | ForEach-Object { "pid " + $_.Id }) -join ", "))
         Save-Result @{ status = "brak_potwierdzenia"; komunikat = $why }
         exit 5
     }

@@ -424,6 +424,9 @@ def write_helper_files(prep: PreparedUpdate, target: Path, pids: list[int]) -> t
         "stage_path": str(prep.work / "etap.json"), "confirm_path": str(prep.work / "potwierdzenie.json"),
         "script_path": str(script), "failed_flag": FAILED_FLAG,
         "protected_dirs": PROTECTED_DIRS, "protected_files": PROTECTED_FILES,
+        # tylko test end-to-end w CI: zmienne środowiska testu muszą trafić do nowej wersji, więc
+        # bez uruchamiania przez Eksplorator (ten nie przekazuje środowiska procesu)
+        "launch_direct": bool(os.environ.get("SKYCATALOG_UPDATE_SELFTEST")),
     }
     path = prep.work / "parametry.json"
     path.write_text(json.dumps(params, ensure_ascii=False, indent=1), encoding="utf-8")

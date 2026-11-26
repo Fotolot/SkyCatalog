@@ -397,6 +397,24 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual(result["status"], "zla_wersja", log)
         self.assertEqual(self.lib(), "v1", log)
 
+    def test_running_but_unconfirmed_version_is_left_alone(self):
+        """Nowa wersja działa, ale nie potwierdziła wersji – żadnego przywracania ani drugiej kopii."""
+        cmd = Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe"
+        (self.new / "SkyCatalog.exe").write_bytes(cmd.read_bytes())   # działa, dopóki go nie zamkniemy
+        version = subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                                  f"(Get-Item -LiteralPath '{str(self.new / 'SkyCatalog.exe').replace(chr(39), chr(39) * 2)}')"
+                                  ".VersionInfo.ProductVersion"], capture_output=True, text=True).stdout.strip()
+        try:
+            code, result, log = self.run_helper(target=version, confirm=False, confirm_s=6)
+        finally:
+            subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                            "Get-Process | Where-Object { $_.Path -like '" + str(self.app).replace("'", "''")
+                            + "\\*' } | Stop-Process -Force"], capture_output=True)
+        self.assertEqual(result["status"], "brak_potwierdzenia", log)
+        self.assertEqual(self.lib(), "v2", log)                    # nowa wersja nietknięta
+        self.assertNotIn("Uruchamianie poprzedniej wersji", log)
+        self.assertTrue((self.app / "_backup" / "_internal" / "lib.dll").exists())
+
     def test_new_version_not_starting_is_rolled_back(self):
         code, result, log = self.run_helper(confirm=False, confirm_s=6)   # whoami kończy się bez potwierdzenia
         self.assertEqual(result["status"], "nowa_wersja_nie_dziala", log)
