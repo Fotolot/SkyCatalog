@@ -218,9 +218,10 @@ class PackageTests(unittest.TestCase):
             self.assertIn(word, text)
 
     def test_helper_command_quotes_paths(self):
-        cmd = updater.helper_command(Path("C:/Temp/O'Brien & syn/aktualizator.ps1"), Path("C:/Temp/p.json"))
+        script = Path("C:/Temp/O'Brien & syn/aktualizator.ps1")
+        cmd = updater.helper_command(script, Path("C:/Temp/p.json"))
         self.assertEqual(cmd[1:4], ["-NoProfile", "-NonInteractive", "-WindowStyle"])
-        self.assertIn("'C:/Temp/O''Brien & syn/aktualizator.ps1'", cmd[-1])
+        self.assertIn("'" + str(script).replace("'", "''") + "'", cmd[-1])
         self.assertTrue(cmd[-1].endswith("'main'"))
 
     def test_helper_params(self):
