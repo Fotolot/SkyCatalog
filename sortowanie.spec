@@ -45,7 +45,8 @@ a = Analysis(
     binaries=[],
     datas=[("sortowanie/web", "sortowanie/web"),        # Leaflet i strona mapy (lokalnie)
            ("sortowanie/assets", "sortowanie/assets"),  # ikona okna
-           ("VERSION", ".")]
+           ("VERSION", "."),
+           ("sortowanie/aktualizator.ps1", "sortowanie")]       # proces aktualizujący (Windows PowerShell)
           + collect_data_files("certifi"),               # cacert.pem – awaryjna weryfikacja HTTPS
     hiddenimports=["truststore", "certifi",              # weryfikacja certyfikatów HTTPS (tls.py)
                    "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebChannel",

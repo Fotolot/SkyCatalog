@@ -46,11 +46,31 @@ Windows SmartScreen może ostrzec przed nieznanym, niepodpisanym programem: „W
   antywirusów skanujących HTTPS), awaryjnie przez `certifi`. Weryfikacja nigdy nie jest wyłączana.
   Gdy jest nowsza wersja, pojawia się okno
   „Dostępna wersja X.Y.Z” z listą zmian:
-  * **Aktualizuj** – pobiera ZIP do folderu tymczasowego, rozpakowuje go, uruchamia skrypt
-    pomocniczy i zamyka program. Skrypt czeka na zamknięcie, robi **kopię zapasową** bieżącej
-    wersji w podfolderze `_backup`, kopiuje nowe pliki do folderu programu i uruchamia go ponownie.
-    Jeśli kopiowanie się nie uda – przywraca kopię i uruchamia poprzednią wersję z komunikatem
-    (log: `aktualizacja.log` w folderze tymczasowym `%TEMP%\SkyCatalog-aktualizacja-<wersja>`).
+  * **Aktualizuj** – pobiera paczkę do folderu tymczasowego `%TEMP%\SkyCatalog-aktualizacja-<wersja>`
+    i sprawdza ją: rozmiar, sumę **SHA-256** podaną przez GitHub, spójność archiwum (CRC), obecność
+    `SkyCatalog.exe` i bibliotek oraz numer wersji. Niepełna lub uszkodzona paczka nie jest instalowana.
+  * Po pobraniu: okno **„Aktualizacja gotowa”** z przyciskiem **Zainstaluj i uruchom ponownie**
+    (albo **Później**). Gdy trwa przenoszenie lub kopiowanie plików, instalacja czeka.
+  * Instalacja: program zapisuje ustawienia i układ, zatrzymuje skanowanie i odświeżanie, odtwarzacz,
+    mapę i bazę, uruchamia **niezależny proces aktualizujący** (Windows PowerShell, bez okna)
+    i się zamyka. Proces aktualizujący:
+    1. czeka na zakończenie programu i jego procesów pomocniczych (np. przeglądarki mapy) – nie
+       nadpisuje działającego `.exe` ani załadowanych bibliotek; gdy pliki programu są nadal używane
+       przez inny proces, nic nie zmienia,
+    2. robi **kopię zapasową** w `_backup` (z plikiem `PRZYWROC_POPRZEDNIA_WERSJE.cmd`),
+    3. podmienia pliki w tym samym folderze – gdy nie ma prawa zapisu, prosi o zgodę **UAC**;
+       anulowanie zgody nie zmienia programu,
+    4. sprawdza, czy nowy `SkyCatalog.exe` ma w metadanych nową wersję,
+    5. uruchamia nową wersję w **zwykłym kontekście użytkownika** i czeka, aż ta potwierdzi start
+       i zgłosi swój numer wersji,
+    6. sprawdza skróty (Pulpit, menu Start) – skrót do innej kopii programu jest zgłaszany.
+
+    Przy każdym błędzie (kopiowanie, zła wersja, nowa wersja się nie uruchamia) proces przywraca
+    kopię z `_backup` i uruchamia poprzednią wersję. Po ponownym uruchomieniu program pokazuje wynik:
+    „Zaktualizowano do wersji X” albo przyczynę błędu z przyciskiem **Otwórz log**.
+  * **Dziennik etapów** – `%LOCALAPPDATA%\SkyCatalog\logs\aktualizacja.log`: wersja obecna
+    i docelowa, ścieżki programu i procesu aktualizującego, PID-y, wynik uruchomienia, kody wyjścia
+    (robocopy, procesy) i błędy.
   * **Później** – zamyka okno; można sprawdzić ponownie w **O programie → Sprawdź aktualizacje**.
 * **Dane użytkownika nie są zmieniane przez aktualizację.** Program trzyma je poza folderem `.exe`:
   * `%APPDATA%\SkyCatalog\` – `ustawienia.json`, `decyzje_lokalizacji.json`,

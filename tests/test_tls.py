@@ -50,7 +50,9 @@ class TlsTests(unittest.TestCase):
 
     def test_all_connections_use_verified_context(self):
         self.assertIs(updater.check_latest.__defaults__[1], tls.urlopen)
-        self.assertIs(updater.download.__defaults__[-1], tls.urlopen)
+        import inspect
+        self.assertIs(inspect.signature(updater.download).parameters["opener"].default, tls.urlopen)
+        self.assertIs(inspect.signature(updater.prepare_update).parameters["opener"].default, tls.urlopen)
         with mock.patch("urllib.request.urlopen") as urlopen:
             tls.urlopen("https://example.invalid", timeout=3)
         self.assertIsInstance(urlopen.call_args.kwargs["context"], ssl.SSLContext)

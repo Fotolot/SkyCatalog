@@ -175,15 +175,45 @@ class MainWindow(QMainWindow):
             return
         from .update_dialog import UpdateDialog, run_update
         if UpdateDialog(self, release).exec():
-            if self.sort_tab.busy:
-                QMessageBox.information(self, APP_NAME, "Poczekaj na zakończenie trwającej operacji na plikach "
-                                                        "i spróbuj ponownie (O programie → Sprawdź aktualizacje).")
-                return
-            run_update(self, release, self._quit_for_update)
+            run_update(self, release, self.install_update)
 
-    def _quit_for_update(self) -> None:
-        self.close()                      # zapis ustawień i układu, zatrzymanie skanowania
+    def install_update(self, prepared) -> bool:
+        """„Zainstaluj i uruchom ponownie”: bezpieczne zakończenie pracy, proces aktualizujący, zamknięcie."""
+        from .. import updater
+        from .update_dialog import _show_error
+        if self.sort_tab.busy:
+            # nie przerywamy przenoszenia/kopiowania plików
+            QMessageBox.information(self, APP_NAME, "Trwa przenoszenie lub kopiowanie plików. Poczekaj na zakończenie "
+                                                    "i kliknij ponownie „O programie → Sprawdź aktualizacje”.")
+            updater.stage_log("Instalacja wstrzymana: trwa operacja na plikach")
+            return False
+        updater.stage_log(f"Zamykanie programu przed instalacją {prepared.release.version}")
+        self.shutdown_for_update()
+        try:
+            pid = updater.launch_helper(prepared)
+        except Exception as exc:  # noqa: BLE001 – program działa dalej w bieżącej wersji
+            updater.stage_log(f"BŁĄD uruchomienia procesu aktualizującego: {type(exc).__name__}: {exc}")
+            _show_error(self, "Nie można uruchomić instalacji – program działa dalej w bieżącej wersji.",
+                        f"{type(exc).__name__}: {exc}")
+            return False
+        updater.stage_log(f"Proces aktualizujący działa (pid {pid}) – zamykanie programu")
+        self._updating = True
+        self.close()
         self.app.quit()
+        return True
+
+    def shutdown_for_update(self) -> None:
+        """Zapis ustawień i stanu, zatrzymanie zadań w tle, odtwarzacza, mapy i bazy."""
+        self.sort_tab.save_state()
+        self._save_layout()
+        self.settings.save()
+        self.map_tab.shutdown()                       # skanowanie/odświeżanie, odtwarzacz
+        try:
+            self.map_tab.map.setUrl("about:blank")    # procesy przeglądarki mapy mogą się zakończyć
+        except Exception:  # noqa: BLE001
+            pass
+        self.catalog.close_all()
+        self._shut_down = True
 
     def show_about(self) -> None:
         from .update_dialog import AboutDialog
@@ -202,6 +232,9 @@ class MainWindow(QMainWindow):
                                                         "ponownym uruchomieniu aplikacji.")
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if getattr(self, "_shut_down", False):        # już zamknięte przez shutdown_for_update
+            super().closeEvent(event)
+            return
         if self.sort_tab.busy and QMessageBox.question(
                 self, APP_NAME, "Trwa operacja na plikach. Zamknąć mimo to?") != QMessageBox.StandardButton.Yes:
             event.ignore()
@@ -241,8 +274,9 @@ def _load_qt_translations(app: QApplication) -> None:
 def main(argv: list[str] | None = None) -> int:
     """``SkyCatalog_1.02.exe [folder_importu] [--mapa] [--skanuj]``"""
     argv = list(sys.argv if argv is None else argv)
-    from .. import tls
+    from .. import tls, updater
     tls.setup()                                        # przed pierwszym połączeniem sieciowym
+    pending = updater.confirm_started()                # po aktualizacji: potwierdź uruchomioną wersję
     from .webmap import register_scheme
     register_scheme()                                  # przed utworzeniem QApplication
     _windows_app_id()
@@ -269,11 +303,63 @@ def main(argv: list[str] | None = None) -> int:
         _run_selftest(app, win, Path(selftest))
     else:
         from .. import updater
-        if updater.FAILED_FLAG in argv:
+        if pending:
+            _show_update_outcome_later(win, pending)
+        elif updater.FAILED_FLAG in argv:
             from .update_dialog import show_failed_update_notice
             QTimer.singleShot(500, lambda: show_failed_update_notice(win))
-        QTimer.singleShot(4000, win.check_updates)        # w tle; błędy nie blokują programu
+        if os.environ.get("SKYCATALOG_UPDATE_SELFTEST"):
+            _run_update_selftest(app, win, pending)
+        else:
+            QTimer.singleShot(4000, win.check_updates)    # w tle; błędy nie blokują programu
     return app.exec()
+
+
+def _show_update_outcome_later(win: "MainWindow", pending: dict) -> None:
+    """Wynik aktualizacji (odczyt w tle – proces aktualizujący zapisuje go po potwierdzeniu startu)."""
+    import threading
+
+    from .. import updater
+    from .common import Poster
+    poster = Poster(win)
+
+    def show(outcome) -> None:
+        if os.environ.get("SKYCATALOG_UPDATE_SELFTEST"):
+            win.app.quit()                        # test end-to-end: wynik zapisany w dzienniku
+            return
+        from .update_dialog import show_update_outcome
+        show_update_outcome(win, outcome, outcome.status)
+    poster.event.connect(show)
+    threading.Thread(target=lambda: poster.post(updater.finish_pending(pending)), daemon=True).start()
+    win._update_poster = poster
+
+
+def _run_update_selftest(app: QApplication, win: "MainWindow", pending: dict | None) -> None:
+    """Test aktualizacji end-to-end (CI, Windows): stara wersja pobiera lokalną paczkę, instaluje ją
+    przez proces aktualizujący i kończy pracę; nowa wersja potwierdza start i kończy pracę.
+    Konfiguracja: SKYCATALOG_UPDATE_SELFTEST = plik JSON {"zip": …, "version": …, "sha256": …}."""
+    import json
+
+    from .. import updater
+    if pending:                                    # to już nowa (albo przywrócona) wersja – zamknie się po wyniku
+        QTimer.singleShot(60000, app.quit)
+        return
+    cfg = json.loads(Path(os.environ["SKYCATALOG_UPDATE_SELFTEST"]).read_text(encoding="utf-8"))
+    zip_path = Path(cfg["zip"])
+    release = updater.Release(version=cfg["version"], tag="v" + cfg["version"], notes="", page_url="",
+                              asset_url=zip_path.resolve().as_uri(), asset_size=zip_path.stat().st_size,
+                              sha256=cfg.get("sha256", ""))
+
+    def go() -> None:
+        try:
+            prepared = updater.prepare_update(release)     # file:// – ten sam kod pobierania i weryfikacji
+        except Exception as exc:  # noqa: BLE001
+            updater.stage_log(f"SAMOTEST: błąd przygotowania: {exc}")
+            app.exit(7)
+            return
+        if not win.install_update(prepared):
+            app.exit(8)
+    QTimer.singleShot(3000, go)
 
 
 def _run_selftest(app: QApplication, win: "MainWindow", shot: Path) -> None:

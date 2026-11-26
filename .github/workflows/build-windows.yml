@@ -132,6 +132,65 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path dist\SkyCatalog -DestinationPath SkyCatalog-portable.zip
 
+      - name: Test aktualizacji end-to-end (stara wersja 0.9.0 -> nowa)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $zip = (Resolve-Path SkyCatalog-portable.zip).Path
+          $sha = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+          # „Stara” wersja: ten sam kod zbudowany z numerem 0.9.0
+          Copy-Item VERSION VERSION.bak
+          Set-Content -NoNewline -Path VERSION -Value "0.9.0"
+          python narzedzia/wersja.py --z-tagow | Out-Null
+          python -m PyInstaller --noconfirm --distpath dist_old --workpath build_old sortowanie.spec | Out-Null
+          Move-Item -Force VERSION.bak VERSION
+          $old = Join-Path $env:RUNNER_TEMP "Programy\Sky Catalog & O'Brien"
+          New-Item -ItemType Directory -Force $old | Out-Null
+          Copy-Item -Recurse -Force dist_old\SkyCatalog\* $old
+          Set-Content -Path (Join-Path $old "ustawienia.json") -Value "dane uzytkownika obok programu"
+          $env:APPDATA = "$env:RUNNER_TEMP\upd\appdata"
+          $env:LOCALAPPDATA = "$env:RUNNER_TEMP\upd\local"
+          New-Item -ItemType Directory -Force "$env:APPDATA\SkyCatalog" | Out-Null
+          '{"offline": true, "tile_url": "https://kafelki.invalid/{z}/{x}/{y}.png"}' | Set-Content -Encoding utf8 "$env:APPDATA\SkyCatalog\ustawienia.json"
+          # Skróty: do aktualizowanej kopii i do innej (nieaktualnej) kopii programu
+          $desk = [Environment]::GetFolderPath("Desktop")
+          $sh = New-Object -ComObject WScript.Shell
+          $l1 = $sh.CreateShortcut("$desk\SkyCatalog test.lnk"); $l1.TargetPath = "$old\SkyCatalog.exe"; $l1.Save()
+          $l2 = $sh.CreateShortcut("$desk\SkyCatalog inna kopia.lnk"); $l2.TargetPath = "C:\InnaKopia\SkyCatalog.exe"; $l2.Save()
+          @{ zip = $zip; version = $env:APP_VERSION; sha256 = $sha } | ConvertTo-Json | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\upd.json"
+          $env:SKYCATALOG_UPDATE_SELFTEST = "$env:RUNNER_TEMP\upd.json"
+          $before = (Get-Item "$old\SkyCatalog.exe").VersionInfo.ProductVersion
+          "Przed aktualizacją: $before"
+          $p = Start-Process -FilePath "$old\SkyCatalog.exe" -PassThru
+          "Stara wersja uruchomiona, pid $($p.Id)"
+          $work = Join-Path $env:TEMP "SkyCatalog-aktualizacja-$env:APP_VERSION"
+          $resultFile = Join-Path $work "wynik.json"
+          $deadline = (Get-Date).AddMinutes(8)
+          while ((Get-Date) -lt $deadline -and -not (Test-Path $resultFile)) { Start-Sleep 2 }
+          # nowa wersja kończy się sama po odczycie wyniku (tryb testu)
+          $until = (Get-Date).AddMinutes(2)
+          while ((Get-Date) -lt $until -and (Test-Path "$env:LOCALAPPDATA\SkyCatalog\aktualizacja_oczekuje.json")) { Start-Sleep 1 }
+          $log = "$env:LOCALAPPDATA\SkyCatalog\logs\aktualizacja.log"
+          "===== Dziennik aktualizacji ====="
+          if (Test-Path $log) { Get-Content $log } else { "(brak dziennika)" }
+          if (-not (Test-Path $resultFile)) { throw "Brak wyniku aktualizacji" }
+          $r = Get-Content $resultFile -Raw | ConvertFrom-Json
+          "Wynik: $($r | ConvertTo-Json -Compress)"
+          $after = (Get-Item "$old\SkyCatalog.exe").VersionInfo.ProductVersion
+          $backup = (Get-Item "$old\_backup\SkyCatalog.exe").VersionInfo.ProductVersion
+          "Po aktualizacji: $after (kopia zapasowa: $backup)"
+          if ($r.status -ne "ok") { throw "Aktualizacja nie powiodła się: $($r.status)" }
+          if ($before -ne "0.9.0") { throw "Zła wersja startowa: $before" }
+          if ($after -ne $env:APP_VERSION) { throw "Plik programu nie raportuje nowej wersji: $after" }
+          if ($backup -ne "0.9.0") { throw "Kopia zapasowa nie zawiera poprzedniej wersji" }
+          if (-not (Select-String -Path $log -SimpleMatch "raportuje wersje $env:APP_VERSION")) { throw "Brak potwierdzenia nowej wersji w dzienniku" }
+          if ((Get-Content (Join-Path $old "ustawienia.json") -Raw).Trim() -ne "dane uzytkownika obok programu") { throw "Nadpisano dane użytkownika" }
+          if (-not ($r.skroty_nieaktualne | Where-Object { $_ -like "*inna kopia*" })) { throw "Nie wykryto skrótu do innej kopii" }
+          if (-not ($r.skroty_poprawne | Where-Object { $_ -like "*SkyCatalog test*" })) { throw "Skrót do aktualizowanej kopii nie został rozpoznany" }
+          if (Test-Path "$env:LOCALAPPDATA\SkyCatalog\aktualizacja_oczekuje.json") { throw "Nowa wersja nie zakończyła obsługi aktualizacji" }
+          Remove-Item "$desk\SkyCatalog test.lnk", "$desk\SkyCatalog inna kopia.lnk" -ErrorAction SilentlyContinue
+          "Test aktualizacji end-to-end: OK"
+
       - uses: actions/upload-artifact@v4
         with:
           name: SkyCatalog-portable-${{ env.APP_VERSION }}

@@ -3,12 +3,18 @@
 1. ``check_latest()`` – pyta https://api.github.com/repos/OWNER/REPO/releases/latest i zwraca
    ``CheckResult``: wydanie albo opis błędu. Błędy nigdy nie blokują startu; każdy jest zapisywany
    (typ, komunikat, traceback, kod HTTP…) do %LOCALAPPDATA%\\SkyCatalog\\logs\\aktualizacja.log.
-2. ``download()`` + ``extract()`` – pobiera ZIP do folderu tymczasowego i rozpakowuje go
-   (z ochroną przed ścieżkami spoza folderu).
-3. ``launch_update_script()`` – zapisuje i uruchamia skrypt pomocniczy ``.cmd``, po czym program
-   się zamyka. Skrypt czeka na zamknięcie procesu, robi kopię zapasową bieżącej wersji w
-   ``_backup``, kopiuje nowe pliki do folderu programu (z pominięciem danych użytkownika),
-   a w razie błędu przywraca kopię. Na końcu uruchamia program ponownie.
+2. ``prepare_update()`` – pobiera ZIP do folderu tymczasowego (plik ``.part``), sprawdza rozmiar,
+   sumę SHA-256 podaną przez GitHub, spójność archiwum i jego zawartość, rozpakowuje go
+   (z ochroną przed ścieżkami spoza folderu). Niepełna paczka nigdy nie jest instalowana.
+3. ``launch_helper()`` – po bezpiecznym zamknięciu pracy programu uruchamia NIEZALEŻNY proces
+   aktualizujący (``aktualizator.ps1``, Windows PowerShell) i program się zamyka. Proces czeka na
+   zakończenie programu i jego procesów pomocniczych, robi kopię zapasową w ``_backup``, podmienia
+   pliki w tym samym folderze (gdy brak prawa zapisu – za zgodą UAC), sprawdza wersję w metadanych
+   nowego .exe, uruchamia nową wersję w zwykłym kontekście użytkownika i czeka na jej potwierdzenie
+   (``confirm_started()``). Przy błędzie przywraca kopię i uruchamia poprzednią wersję.
+4. Wszystkie etapy (wersje, ścieżki, PID-y, kody wyjścia, błędy) trafiają do dziennika
+   %LOCALAPPDATA%\\SkyCatalog\\logs\\aktualizacja.log; wynik ostatniej aktualizacji – do pliku
+   ``wynik.json`` w folderze roboczym, odczytywanego po ponownym uruchomieniu.
 
 Dane użytkownika SkyCatalog nie leżą w folderze programu – są w:
   %APPDATA%\\SkyCatalog       ustawienia.json, cache_osm.json, decyzje_lokalizacji.json,
@@ -21,6 +27,7 @@ usuwane (PROTECTED_FILES / PROTECTED_DIRS).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -63,6 +70,7 @@ class Release:
     asset_url: str | None
     asset_size: int
     page_url: str
+    sha256: str = ""          # z pola „digest” zasobu wydania GitHub („sha256:…”), jeśli podane
 
 
 def parse_version(text: str) -> tuple[int, ...] | None:
@@ -192,7 +200,13 @@ def parse_release(data: dict) -> Release | None:
     return Release(version=tag.lstrip("v"), tag=tag, notes=str(data.get("body") or "").strip(),
                    asset_url=asset.get("browser_download_url") if asset else None,
                    asset_size=int(asset.get("size") or 0) if asset else 0,
-                   page_url=str(data.get("html_url") or RELEASES_URL))
+                   page_url=str(data.get("html_url") or RELEASES_URL),
+                   sha256=_digest(asset))
+
+
+def _digest(asset: dict | None) -> str:
+    value = str((asset or {}).get("digest") or "")
+    return value.split(":", 1)[1].lower() if value.lower().startswith("sha256:") else ""
 
 
 def check_latest(timeout: float = 8.0, opener=tls.urlopen) -> CheckResult:
@@ -222,38 +236,67 @@ def check_latest(timeout: float = 8.0, opener=tls.urlopen) -> CheckResult:
     return CheckResult(STATUS_OK, release=release)
 
 
+def stage_log(message: str) -> None:
+    """Wpis etapu aktualizacji w trwałym dzienniku (strona programu)."""
+    write_log([f"[{datetime.now().isoformat(timespec='seconds')}] [program {__version__} pid {os.getpid()}] {message}"])
+
+
 def download(release: Release, dest_dir: Path, progress: Callable[[int, int], None] | None = None,
-             opener=tls.urlopen) -> Path:
+             opener=tls.urlopen, cancelled: Callable[[], bool] | None = None) -> Path:
+    """Pobiera paczkę do ``.part`` i dopiero po sprawdzeniu rozmiaru i sumy SHA-256 nadaje jej
+    docelową nazwę – przerwane lub uszkodzone pobieranie nigdy nie zostanie zainstalowane."""
     if not release.asset_url:
         raise UpdateError(f"Wydanie {release.tag} nie zawiera pliku {RELEASE_ASSET}.")
     dest_dir.mkdir(parents=True, exist_ok=True)
     target = dest_dir / RELEASE_ASSET
+    part = dest_dir / (RELEASE_ASSET + ".part")
     req = urllib.request.Request(release.asset_url, headers={"User-Agent": _user_agent(),
                                                              "Accept": "application/octet-stream"})
+    digest = hashlib.sha256()
     try:
-        with opener(req, timeout=60) as resp, open(target, "wb") as f:
+        with opener(req, timeout=60) as resp, open(part, "wb") as f:
             total = int(resp.headers.get("Content-Length") or release.asset_size or 0)
             done = 0
             while True:
+                if cancelled and cancelled():
+                    raise UpdateError("Anulowano pobieranie.")
                 chunk = resp.read(1024 * 256)
                 if not chunk:
                     break
                 f.write(chunk)
+                digest.update(chunk)
                 done += len(chunk)
                 if progress:
                     progress(done, total)
+            f.flush()
+            os.fsync(f.fileno())
+        size = part.stat().st_size
+        if release.asset_size and size != release.asset_size:
+            raise UpdateError(f"Pobrany plik ma nieprawidłowy rozmiar ({size} z {release.asset_size} B) – "
+                              "spróbuj ponownie.")
+        if release.sha256 and digest.hexdigest() != release.sha256:
+            raise UpdateError("Suma kontrolna SHA-256 pobranego pliku nie zgadza się z wydaniem – plik "
+                              "uszkodzony lub niepełny.")
+        os.replace(part, target)
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
+        part.unlink(missing_ok=True)
         raise UpdateError(f"Nie udało się pobrać aktualizacji: {exc}") from exc
-    if release.asset_size and target.stat().st_size != release.asset_size:
-        raise UpdateError("Pobrany plik ma nieprawidłowy rozmiar – spróbuj ponownie.")
+    except UpdateError:
+        part.unlink(missing_ok=True)
+        raise
+    stage_log(f"Pobrano {target} ({size} B, SHA-256 {digest.hexdigest()}"
+              f"{', zgodna z wydaniem' if release.sha256 else ', wydanie nie podaje sumy'})")
     return target
 
 
 def extract(zip_path: Path, dest_dir: Path) -> Path:
-    """Rozpakowuje ZIP i zwraca folder zawierający SkyCatalog.exe."""
+    """Sprawdza spójność ZIP, rozpakowuje go i zwraca folder zawierający SkyCatalog.exe."""
     dest = dest_dir.resolve()
     try:
         with zipfile.ZipFile(zip_path) as zf:
+            bad = zf.testzip()                      # CRC każdego pliku
+            if bad is not None:
+                raise UpdateError(f"Uszkodzony plik w archiwum: {bad}")
             for member in zf.infolist():
                 target = (dest / member.filename).resolve()
                 if dest != target and dest not in target.parents:
@@ -266,6 +309,21 @@ def extract(zip_path: Path, dest_dir: Path) -> Path:
     raise UpdateError(f"W archiwum nie ma pliku {EXE_NAME}.")
 
 
+def verify_package(new_dir: Path, version: str) -> None:
+    """Paczka musi zawierać program i jego biblioteki oraz deklarować wersję wydania."""
+    exe = new_dir / EXE_NAME
+    if not exe.is_file() or exe.stat().st_size < 100_000:
+        raise UpdateError(f"Paczka nie zawiera poprawnego pliku {EXE_NAME}.")
+    internal = new_dir / "_internal"
+    if not internal.is_dir() or not any(internal.iterdir()):
+        raise UpdateError("Paczka nie zawiera bibliotek programu (_internal).")
+    declared = internal / "VERSION"
+    if declared.is_file():
+        text = declared.read_text(encoding="utf-8", errors="replace").strip()
+        if re.fullmatch(r"\d+\.\d+\.\d+", text) and text != version:
+            raise UpdateError(f"Paczka zawiera wersję {text}, a wydanie to {version}.")
+
+
 def can_write(folder: Path) -> bool:
     try:
         with tempfile.NamedTemporaryFile(dir=folder, prefix=".skycatalog_test_", delete=True):
@@ -274,84 +332,200 @@ def can_write(folder: Path) -> bool:
         return False
 
 
-# Skrypt pomocniczy. Ścieżki przekazywane są jako ARGUMENTY (nie są wklejane w treść skryptu).
-# Tylko znaki ASCII – cmd.exe czyta plik w stronie kodowej OEM.
-SCRIPT_TEMPLATE = r"""@echo off
-setlocal EnableExtensions DisableDelayedExpansion
-rem SkyCatalog - aktualizacja wersji przenosnej.
-rem Argumenty: PID "folder_programu" "folder_nowej_wersji" "nazwa.exe"
-set "PID=%~1"
-set "APP=%~2"
-set "NEW=%~3"
-set "EXE=%~4"
-set "LOG=%~dp0aktualizacja.log"
-echo [%date% %time%] Start aktualizacji: "%APP%" > "%LOG%"
-set /a N=0
-:wait
-tasklist /FI "PID eq %PID%" /NH 2>nul | find " %PID% " >nul
-if errorlevel 1 goto closed
-set /a N+=1
-if %N% GEQ 120 goto timeout
-timeout /t 1 /nobreak >nul
-goto wait
-:closed
-timeout /t 1 /nobreak >nul
-echo Kopia zapasowa do _backup >> "%LOG%"
-if exist "%APP%\_backup" rmdir /s /q "%APP%\_backup"
-robocopy "%APP%" "%APP%\_backup" /E /R:2 /W:1 /NP /XD "%APP%\_backup" {xd} /XF {xf} >> "%LOG%"
-if errorlevel 4 goto backup_failed
-echo Kopiowanie nowej wersji >> "%LOG%"
-rem /IS /IT: kopiuj takze pliki o tym samym rozmiarze i dacie (robocopy domyslnie je pomija)
-robocopy "%NEW%" "%APP%" /E /IS /IT /R:3 /W:2 /NP /XD {xd} /XF {xf} >> "%LOG%"
-rem kody robocopy: 0-3 = OK, 4 = konflikt plik/folder (niepelna kopia), 8+ = bledy
-if errorlevel 4 goto restore
-echo Aktualizacja zakonczona >> "%LOG%"
-start "" "%APP%\%EXE%"
-exit /b 0
-:restore
-echo BLAD kopiowania - przywracanie poprzedniej wersji z _backup >> "%LOG%"
-robocopy "%APP%\_backup" "%APP%" /E /IS /IT /R:3 /W:2 /NP >> "%LOG%"
-start "" "%APP%\%EXE%" {failed}
-exit /b 1
-:backup_failed
-echo BLAD kopii zapasowej - aktualizacja przerwana, nic nie zmieniono >> "%LOG%"
-start "" "%APP%\%EXE%" {failed}
-exit /b 1
-:timeout
-echo Program nie zamknal sie w ciagu 2 minut - aktualizacja przerwana >> "%LOG%"
-exit /b 1
-"""
+# ── Przygotowanie i uruchomienie procesu aktualizującego ───────
+
+HELPER_NAME = "aktualizator.ps1"
+WAIT_SECONDS = 120          # na zamknięcie programu i jego procesów pomocniczych
+CONFIRM_SECONDS = 90        # na potwierdzenie startu nowej wersji
 
 
-def build_script() -> str:
-    quote = lambda items: " ".join(f'"{x}"' for x in items)  # noqa: E731
-    text = SCRIPT_TEMPLATE.format(xd=quote(PROTECTED_DIRS), xf=quote(PROTECTED_FILES), failed=FAILED_FLAG)
-    text.encode("ascii")                      # gwarancja: skrypt tylko w ASCII
-    return text.replace("\n", "\r\n")
+def helper_source() -> Path:
+    return Path(__file__).resolve().parent / HELPER_NAME
 
 
-def write_script(work_dir: Path) -> Path:
-    script = work_dir / "aktualizuj_skycatalog.cmd"
-    script.write_bytes(build_script().encode("ascii"))
-    return script
+def work_dir_for(version: str) -> Path:
+    return Path(tempfile.gettempdir()) / f"{APP_NAME}-aktualizacja-{version}"
 
 
-def launch_update_script(script: Path, new_dir: Path, target_dir: Path, pid: int | None = None) -> None:
-    """Uruchamia skrypt w tle (bez okna konsoli). Program powinien zaraz po tym się zamknąć."""
-    if sys.platform != "win32":
-        raise UpdateError("Automatyczna aktualizacja działa tylko w Windows.")
-    pid = pid or os.getpid()
-    cmd = f'cmd.exe /d /s /c ""{script}" {pid} "{target_dir}" "{new_dir}" "{EXE_NAME}""'
-    flags = 0x00000008 | 0x00000200 | 0x08000000   # DETACHED_PROCESS | NEW_PROCESS_GROUP | NO_WINDOW
-    subprocess.Popen(cmd, creationflags=flags, close_fds=True, cwd=str(script.parent))
+def pending_path() -> Path:
+    """Znacznik oczekującej aktualizacji (odczytywany przez program po ponownym uruchomieniu)."""
+    return local_data_dir() / "aktualizacja_oczekuje.json"
 
 
-def prepare_update(release: Release, progress: Callable[[int, int], None] | None = None) -> tuple[Path, Path]:
-    """Pobiera i rozpakowuje wydanie; zwraca (skrypt, folder_nowej_wersji)."""
-    work = Path(tempfile.gettempdir()) / f"{APP_NAME}-aktualizacja-{release.version}"
+@dataclass
+class PreparedUpdate:
+    release: Release
+    work: Path
+    zip_path: Path
+    new_dir: Path
+
+
+def prepare_update(release: Release, progress: Callable[[int, int], None] | None = None,
+                   cancelled: Callable[[], bool] | None = None, opener=tls.urlopen) -> PreparedUpdate:
+    """Pobiera, sprawdza i rozpakowuje wydanie do folderu tymczasowego (bez zmian w programie)."""
+    work = work_dir_for(release.version)
+    stage_log(f"=== Przygotowanie aktualizacji {__version__} -> {release.version} (folder {work})")
     if work.exists():
         shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    zip_path = download(release, work, progress)
+    zip_path = download(release, work, progress, opener=opener, cancelled=cancelled)
     new_dir = extract(zip_path, work / "nowa_wersja")
-    return write_script(work), new_dir
+    verify_package(new_dir, release.version)
+    stage_log(f"Paczka sprawdzona i rozpakowana: {new_dir}")
+    return PreparedUpdate(release, work, zip_path, new_dir)
+
+
+def descendant_pids(root_pid: int) -> list[int]:
+    """Procesy potomne programu (np. QtWebEngineProcess) – proces aktualizujący czeka i na nie."""
+    if sys.platform != "win32":
+        return []
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260)]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)           # TH32CS_SNAPPROCESS
+    if not snap or snap == wintypes.HANDLE(-1).value:
+        return []
+    parents: dict[int, list[int]] = {}
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            parents.setdefault(entry.th32ParentProcessID, []).append(entry.th32ProcessID)
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+    out, stack = [], [root_pid]
+    while stack:
+        for child in parents.get(stack.pop(), []):
+            if child not in out and child != root_pid:
+                out.append(child)
+                stack.append(child)
+    return out
+
+
+def write_helper_files(prep: PreparedUpdate, target: Path, pids: list[int]) -> tuple[Path, Path]:
+    """Kopiuje skrypt pomocniczy do folderu roboczego i zapisuje jego parametry (JSON)."""
+    script = prep.work / HELPER_NAME
+    shutil.copyfile(helper_source(), script)
+    params = {
+        "app_dir": str(target), "new_dir": str(prep.new_dir), "exe_name": EXE_NAME,
+        "current_version": __version__, "target_version": prep.release.version,
+        "pids": pids, "wait_seconds": WAIT_SECONDS, "confirm_seconds": CONFIRM_SECONDS,
+        "log_path": str(log_path()), "result_path": str(prep.work / "wynik.json"),
+        "stage_path": str(prep.work / "etap.json"), "confirm_path": str(prep.work / "potwierdzenie.json"),
+        "script_path": str(script), "failed_flag": FAILED_FLAG,
+        "protected_dirs": PROTECTED_DIRS, "protected_files": PROTECTED_FILES,
+    }
+    path = prep.work / "parametry.json"
+    path.write_text(json.dumps(params, ensure_ascii=False, indent=1), encoding="utf-8")
+    log_path().parent.mkdir(parents=True, exist_ok=True)
+    return script, path
+
+
+def helper_command(script: Path, params: Path, mode: str = "main") -> list[str]:
+    """Polecenie procesu aktualizującego. Treść skryptu jest wczytywana jako tekst, więc nie
+    blokują jej zasady wykonywania skryptów; ścieżki są literałami PowerShell (apostrof podwojony)."""
+    q = lambda p: "'" + str(p).replace("'", "''") + "'"  # noqa: E731
+    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / \
+        "powershell.exe"
+    return [str(powershell if powershell.exists() else "powershell.exe"), "-NoProfile", "-NonInteractive",
+            "-WindowStyle", "Hidden", "-Command",
+            f"& ([scriptblock]::Create([IO.File]::ReadAllText({q(script)}))) {q(params)} '{mode}'"]
+
+
+def launch_helper(prep: PreparedUpdate, target: Path | None = None, pid: int | None = None) -> int:
+    """Uruchamia niezależny proces aktualizujący i zapisuje znacznik oczekującej aktualizacji.
+    Zwraca PID procesu aktualizującego. Program powinien zaraz potem zakończyć pracę."""
+    if sys.platform != "win32":
+        raise UpdateError("Automatyczna aktualizacja działa tylko w Windows.")
+    target = target or app_dir()
+    pid = pid or os.getpid()
+    pids = [pid] + descendant_pids(pid)
+    script, params = write_helper_files(prep, target, pids)
+    for stale in ("wynik.json", "etap.json", "potwierdzenie.json"):
+        (prep.work / stale).unlink(missing_ok=True)
+    cmd = helper_command(script, params)
+    stage_log(f"Folder programu: {target}; proces aktualizujący: {script}; PID-y programu: {pids}")
+    flags = 0x08000000 | 0x00000200          # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+    try:
+        proc = subprocess.Popen(cmd, creationflags=flags | 0x01000000, close_fds=True, cwd=str(prep.work))
+    except OSError:                           # zadanie (job) bez prawa wyjścia – bez CREATE_BREAKAWAY_FROM_JOB
+        proc = subprocess.Popen(cmd, creationflags=flags, close_fds=True, cwd=str(prep.work))
+    stage_log(f"Uruchomiono proces aktualizujący (pid {proc.pid}): {subprocess.list2cmdline(cmd)}")
+    pending = {"current": __version__, "target": prep.release.version, "work": str(prep.work),
+               "result": str(prep.work / "wynik.json"), "confirm": str(prep.work / "potwierdzenie.json"),
+               "app_dir": str(target), "helper_pid": proc.pid, "time": datetime.now().isoformat(timespec="seconds")}
+    pending_path().parent.mkdir(parents=True, exist_ok=True)
+    pending_path().write_text(json.dumps(pending, ensure_ascii=False, indent=1), encoding="utf-8")
+    return proc.pid
+
+
+# ── Po ponownym uruchomieniu ───────────────────────────────────
+
+def read_pending() -> dict | None:
+    try:
+        data = json.loads(pending_path().read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def confirm_started() -> dict | None:
+    """Wywoływane na samym początku programu: jeśli trwa aktualizacja, potwierdza procesowi
+    aktualizującemu, jaką wersję faktycznie uruchomiono (wersja, PID, ścieżka .exe)."""
+    pending = read_pending()
+    if not pending:
+        return None
+    info = {"version": __version__, "pid": os.getpid(),
+            "exe": sys.executable if is_frozen() else str(Path(sys.argv[0]).resolve())}
+    try:
+        Path(pending["confirm"]).write_text(json.dumps(info), encoding="utf-8")
+    except (OSError, KeyError, TypeError):
+        pass
+    stage_log(f"Program uruchomiony po aktualizacji: wersja {__version__}, pid {os.getpid()}, {info['exe']} "
+              f"(oczekiwana {pending.get('target')})")
+    return pending
+
+
+@dataclass
+class UpdateOutcome:
+    ok: bool
+    target: str
+    message: str
+    stale_shortcuts: list[str]
+    status: str = ""
+
+
+def finish_pending(pending: dict, wait_s: float = 20.0) -> UpdateOutcome:
+    """Wynik zakończonej aktualizacji (czeka chwilę na zapis wyniku przez proces aktualizujący)."""
+    import time
+    result: dict = {}
+    end = time.monotonic() + wait_s
+    while time.monotonic() < end:
+        try:
+            result = json.loads(Path(pending["result"]).read_text(encoding="utf-8-sig"))
+            break
+        except (OSError, ValueError, KeyError, TypeError):
+            time.sleep(0.5)
+    target = str(pending.get("target", ""))
+    ok = __version__ == target
+    stale = list(result.get("skroty_nieaktualne") or []) if isinstance(result, dict) else []
+    message = str(result.get("komunikat") or "") if isinstance(result, dict) else ""
+    if not ok and not message:
+        message = f"Uruchomiona wersja to {__version__}, a oczekiwana {target}."
+    stage_log(f"Wynik aktualizacji do {target}: {'OK' if ok else 'BŁĄD'} – {result.get('status', 'brak wyniku')}")
+    try:
+        pending_path().unlink()
+    except OSError:
+        pass
+    status = str(result.get("status") or "") if isinstance(result, dict) else ""
+    return UpdateOutcome(ok, target, message, stale, status)
