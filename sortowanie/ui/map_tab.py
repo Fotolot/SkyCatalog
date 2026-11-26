@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (QCheckBox, QComboBox, QFormLayout, QGroupBox, QHB
 from .. import catalog as cat
 from ..config import Settings
 from ..mapgeom import thin_latlon
-from ..scanner import Scanner, ScanProgress
+from ..refresh import LibraryRefresher, RefreshProgress
+from ..scanner import Scanner
 from ..tiles import provider_from_settings
 from .common import DateField, Poster, flow, materials_word, plain_label, scrollable, shrinkable, splitter
 from .dialogs import ScanSettingsDialog, SkipsDialog
@@ -46,6 +47,7 @@ class MapTab(QWidget):
         self.settings = settings
         self.dark = dark
         self.scanner: Scanner | None = None
+        self.refresher: LibraryRefresher | None = None
         self.view: dict | None = None
         self.selected_id: int | None = None
         self._poster = Poster(self)
@@ -67,6 +69,11 @@ class MapTab(QWidget):
         self.btn_resume = QPushButton("Wznów")
         self.btn_scan_settings = QPushButton("Ustawienia skanowania…")
         self.btn_scan.clicked.connect(self.start_scan)
+        self.btn_refresh = QPushButton("Odśwież bibliotekę")
+        self.btn_refresh.setToolTip("Sprawdza ponownie foldery z zaindeksowanymi materiałami (bez skanowania "
+                                    "całego komputera): usuwa wpisy plików, których już nie ma, dodaje nowe "
+                                    "i odczytuje zmienione. Pliki na dysku nie są zmieniane.")
+        self.btn_refresh.clicked.connect(self.refresh_library)
         self.btn_cancel.clicked.connect(self.cancel_scan)
         self.btn_resume.clicked.connect(lambda: self.start_scan(resume=True))
         self.btn_scan_settings.clicked.connect(self._scan_settings)
@@ -78,7 +85,8 @@ class MapTab(QWidget):
         self.btn_skips = QPushButton("Pominięte…")
         self.btn_skips.clicked.connect(self._show_skips)
         g = QVBoxLayout(scan_box)
-        g.addWidget(flow(self.btn_scan, self.btn_cancel, self.btn_resume, self.btn_scan_settings, self.btn_skips))
+        g.addWidget(flow(self.btn_scan, self.btn_refresh, self.btn_cancel, self.btn_resume, self.btn_scan_settings,
+                         self.btn_skips))
         g.addWidget(self.scan_progress)
         g.addWidget(self.scan_status)
         g.addWidget(self.scan_folder)
@@ -394,8 +402,11 @@ class MapTab(QWidget):
             self.select(self.selected_id)
 
     # ══ Skanowanie ═════════════════════════════════════════════
+    def _busy(self) -> bool:
+        return bool((self.scanner and self.scanner.running) or (self.refresher and self.refresher.running))
+
     def start_scan(self, resume: bool = False) -> None:
-        if self.scanner and self.scanner.running:
+        if self._busy():
             return
         self.scanner = Scanner(self.catalog, self.settings, on_progress=lambda p: self._poster.post(p))
         self.scanner.start(resume=resume)
@@ -404,14 +415,72 @@ class MapTab(QWidget):
         self._update_scan_buttons(running=True)
 
     def cancel_scan(self) -> None:
-        if self.scanner:
+        if self.refresher and self.refresher.running:
+            self.refresher.cancel()
+            self.scan_status.setText("Anulowanie – kończę bieżący folder, pozostałe zostaną bez zmian…")
+        elif self.scanner:
             self.scanner.cancel()
             self.scan_status.setText("Anulowanie – kończę bieżący folder…")
+
+    # ══ Odświeżanie biblioteki ═════════════════════════════════
+    def refresh_library(self) -> None:
+        """Ponowna weryfikacja zaindeksowanych folderów w tle (z postępem i anulowaniem)."""
+        if self._busy():
+            return
+        self.place_list.dismiss()
+        self.refresher = LibraryRefresher(self.catalog, on_progress=lambda p: self._poster.post(p))
+        self.refresher.start()
+        self.scan_status.setText("Odświeżanie biblioteki – sprawdzanie zaindeksowanych folderów…")
+        self.scan_progress.setRange(0, 0)
+        self._update_scan_buttons(running=True)
+
+    def _on_refresh_event(self, prog: RefreshProgress) -> None:
+        if not (prog.finished or prog.cancelled):
+            if prog.total:
+                self.scan_progress.setRange(0, prog.total)
+                self.scan_progress.setValue(prog.done)
+            self.scan_status.setText(f"Odświeżanie: folderów {prog.done} z {prog.total} · {prog.summary}")
+            self.scan_folder.setText(prog.current)
+            return
+        self.scan_progress.setRange(0, 1)
+        self.scan_progress.setValue(1 if prog.finished else 0)
+        self.scan_folder.setText("")
+        head = "Biblioteka odświeżona" if prog.finished else \
+            f"Odświeżanie anulowane (sprawdzono {prog.done} z {prog.total} folderów – pozostałe bez zmian)"
+        self.scan_status.setText(f"{head}. {prog.summary}.")
+        self._update_scan_buttons(running=False)
+        self._after_library_change(set(prog.removed_ids), set(prog.changed_ids))
+        text = prog.summary + "."
+        if prog.unavailable_dirs:
+            shown = "\n".join(f"• {d}" for d in prog.unavailable_dirs[:8])
+            more = f"\n… i {len(prog.unavailable_dirs) - 8} więcej" if len(prog.unavailable_dirs) > 8 else ""
+            text += ("\n\nNiedostępne foldery (odłączony dysk, brak uprawnień) – wpisy zachowano i oznaczono "
+                     f"jako niedostępne:\n{shown}{more}")
+        if prog.cancelled:
+            text = head + ".\n\n" + text
+        QMessageBox.information(self, "Odśwież bibliotekę", text)
+
+    def _after_library_change(self, removed: set[int], changed: set[int]) -> None:
+        """Odświeża listy, mapę, liczniki i podgląd – z zachowaniem aktywnych filtrów."""
+        self._load_filter_values()
+        self._refresh_lists()
+        self.map.send("reset")
+        current = self.selected_id
+        if current is not None and (current in removed or not self.catalog.exists(current)):
+            self.selected_id = None
+            self.preview.show_material(None)       # czyści podgląd i zatrzymuje odtwarzanie
+        elif current is not None and current in changed:
+            self.preview.material = None
+            self.select(current)
+        elif current is not None:
+            self.select(current)                    # przywróć podświetlenie po „reset” mapy
+        self._update_scan_buttons(running=False)
 
     def _update_scan_buttons(self, running: bool = False) -> None:
         can_resume = not running and self.catalog.get_state("scan_status") in ("przerwane", "trwa") \
             and self.catalog.queue_pending() > 0
         self.btn_scan.setEnabled(not running)
+        self.btn_refresh.setEnabled(not running and bool(self.catalog.totals().get("razem")))
         self.btn_cancel.setEnabled(running)
         self.btn_resume.setEnabled(can_resume)
         self.btn_scan_settings.setEnabled(not running)
@@ -420,7 +489,10 @@ class MapTab(QWidget):
             self.scan_status.setText(f"W katalogu: {materials_word(t.get('razem', 0))}"
                                      + (" · skanowanie przerwane – można wznowić" if can_resume else ""))
 
-    def _on_scan_event(self, prog: ScanProgress) -> None:
+    def _on_scan_event(self, prog) -> None:
+        if isinstance(prog, RefreshProgress):
+            self._on_refresh_event(prog)
+            return
         self._last_run = prog.run
         done, pending = prog.dirs_done, prog.dirs_pending
         if prog.finished or prog.cancelled:
@@ -463,6 +535,9 @@ class MapTab(QWidget):
         SkipsDialog(self, self.catalog.skip_summary(run), self.catalog.skips(run, 2000)).exec()
 
     def shutdown(self) -> None:
+        if self.refresher and self.refresher.running:
+            self.refresher.cancel()               # przerywa przed kolejnym folderem – nic nie jest niekompletne
+            self.refresher.wait(5.0)
         if self.scanner and self.scanner.running:
             self.scanner.cancel()
             self.scanner.wait(5.0)     # zapis stanu „przerwane”, aby można było wznowić

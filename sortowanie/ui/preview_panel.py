@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import threading
 from pathlib import Path
 
@@ -13,7 +12,7 @@ from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QMessageBox, QPus
 
 from .. import catalog as cat
 from .. import preview
-from ..config import local_data_dir
+from ..thumbs import thumb_dir, thumb_path  # noqa: F401 – thumb_dir używane też poza modułem
 from .common import Poster, flow, human_size, plain_label, scrollable, shrinkable, splitter
 
 try:
@@ -27,13 +26,8 @@ DISPLAY_MAX = 1600
 THUMB_MAX = 1024
 
 
-def thumb_dir() -> Path:
-    return local_data_dir() / "miniatury"
-
-
 def _thumb_path(path: Path, size: int, mtime: float) -> Path:
-    h = hashlib.sha1(f"{path}|{size}|{mtime}".encode("utf-8", "surrogatepass")).hexdigest()[:24]
-    return thumb_dir() / f"{h}.jpg"
+    return thumb_path(path, size, mtime)
 
 
 def _oriented(img: QImage, orientation: int | None) -> QImage:
