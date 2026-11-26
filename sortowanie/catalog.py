@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -505,6 +506,48 @@ class Catalog:
                     c.execute("UPDATE materials SET status=? WHERE id=?", (STATUS_MISSING, m["id"]))
                     result["brak_pliku"] += 1
         return result
+
+    # ── Odświeżanie biblioteki (weryfikacja indeksowanych folderów) ──
+    def indexed_dirs(self) -> list[str]:
+        """Foldery, w których leżą zaindeksowane materiały – zakres „Odśwież bibliotekę”."""
+        rows = self.conn().execute("SELECT dir, dir_key FROM materials GROUP BY dir_key ORDER BY dir_key").fetchall()
+        return [r["dir"] for r in rows]
+
+    def dir_files(self, directory: str) -> set[tuple[str, int, float]]:
+        """(ścieżka, rozmiar, data) plików zaindeksowanych w folderze."""
+        return {(r["path"], r["size"], r["mtime"]) for r in self.conn().execute(
+            "SELECT f.path, f.size, f.mtime FROM files f JOIN materials m ON m.id=f.material_id WHERE m.dir_key=?",
+            (path_key(directory),))}
+
+    def remove_absent(self, directory: str, present_stems: set[str]) -> list[int]:
+        """Usuwa z katalogu materiały folderu, których plików już nie ma (``present_stems`` – grupy
+        faktycznie obecne na dysku). Wywoływać WYŁĄCZNIE po pełnym odczycie zawartości folderu.
+        Trasy i metadane znikają razem z wpisem; pliki na dysku nie są zmieniane."""
+        c = self.conn()
+        removed = []
+        with self._write_lock, c:
+            for r in c.execute("SELECT id, stem_key, main_path FROM materials WHERE dir_key=?",
+                               (path_key(directory),)).fetchall():
+                # klucz bywa uzupełniony o „#id” przy kolizji nazw (patrz _refresh_material_paths)
+                base = re.sub(r"#\d+$", "", r["stem_key"])
+                if r["stem_key"] in present_stems or base in present_stems or is_in_flight(r["main_path"]):
+                    continue
+                c.execute("DELETE FROM files WHERE material_id=?", (r["id"],))
+                c.execute("DELETE FROM materials WHERE id=?", (r["id"],))
+                removed.append(r["id"])
+        return removed
+
+    def mark_dir_unavailable(self, directory: str) -> int:
+        """Folder chwilowo niedostępny (odłączony dysk, brak uprawnień) – wpisy ZOSTAJĄ,
+        z oznaczeniem „niedostępny”. Zwraca liczbę materiałów w folderze."""
+        c = self.conn()
+        with self._write_lock, c:
+            c.execute("UPDATE materials SET status=? WHERE dir_key=? AND status IN (?, ?)",
+                      (STATUS_OFFLINE, path_key(directory), STATUS_OK, STATUS_MISSING))
+            return c.execute("SELECT COUNT(*) FROM materials WHERE dir_key=?", (path_key(directory),)).fetchone()[0]
+
+    def exists(self, material_id: int) -> bool:
+        return self.conn().execute("SELECT 1 FROM materials WHERE id=?", (material_id,)).fetchone() is not None
 
     # ── Zapytania mapy i listy ──
     def query_points(self, flt: Filters, bbox: tuple[float, float, float, float] | None = None,

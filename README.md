@@ -174,6 +174,26 @@ Zasady:
   bez liczenia sum kontrolnych. Pliki usunięte lub przeniesione poza aplikacją są wykrywane.
 * Nic nie jest wysyłane do internetu – zdjęcia, filmy i SRT są czytane wyłącznie lokalnie.
 
+### Odśwież bibliotekę
+
+Gdy zdjęcia lub filmy zostały usunięte, przeniesione albo zmienione poza aplikacją, przycisk
+**Odśwież bibliotekę** sprawdza ponownie foldery z zaindeksowanymi materiałami – bez skanowania
+całego komputera (nowe foldery dodaje „Skanuj komputer”):
+
+* wpisy plików, których już nie ma, są usuwane z katalogu razem z zapisaną trasą i miniaturami,
+* nowe pliki w tych folderach są dodawane, a zmienione (inny rozmiar lub data) odczytywane ponownie;
+  niezmienione nie są odczytywane,
+* odłączony dysk, brak uprawnień lub chwilowo niedostępny folder **nie** oznaczają usunięcia –
+  wpisy zostają z oznaczeniem „niedostępny” (i wracają do „dostępny”, gdy dysk wróci),
+* działa w tle, z postępem; **Anuluj** przerywa przed kolejnym folderem, a niesprawdzone foldery
+  zostają bez zmian,
+* lista, mapa, liczniki i podgląd odświeżają się z zachowaniem filtrów; jeżeli usunięto oglądany
+  materiał, podgląd jest czyszczony, a odtwarzanie zatrzymane,
+* na końcu: „Dodano: X, zaktualizowano: Y, usunięto nieaktualne wpisy: Z, niedostępne: N”.
+
+Oryginalne pliki na dysku nigdy nie są usuwane ani zmieniane – odświeżanie dotyczy wyłącznie
+katalogu programu i jego miniatur.
+
 ### Co jest pokazywane
 
 * **Zdjęcia** JPG/JPEG/DNG – mała kropka w miejscu zapisanym w EXIF (prawidłowe N/S i E/W).
