@@ -304,7 +304,9 @@ class WindowsHelperTests(unittest.TestCase):
         (self.new / "ustawienia.json").write_text("NIE KOPIOWAĆ", encoding="utf-8")
         (self.app / "katalog.sqlite").write_text("baza", encoding="utf-8")
         self.version = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", f"(Get-Item -LiteralPath '{exe_src}').VersionInfo.ProductVersion"],
+            ["powershell.exe", "-NoProfile", "-Command",       # z kopii – pliki systemowe biorą tekst z .mui
+             f"(Get-Item -LiteralPath '{str(self.new / 'SkyCatalog.exe').replace(chr(39), chr(39) * 2)}')"
+             ".VersionInfo.ProductVersion"],
             capture_output=True, text=True).stdout.strip()
         self._env = mock.patch.dict(os.environ, {"LOCALAPPDATA": str(self.root / "local")})
         self._env.start()
@@ -326,7 +328,7 @@ class WindowsHelperTests(unittest.TestCase):
         def confirm_when_started():                 # udaje nową wersję potwierdzającą start
             log = updater.log_path()
             while not stop.is_set():
-                if log.exists() and "Uruchomiono nowa wersje" in log.read_text(encoding="utf-8", errors="replace"):
+                if log.exists() and "Uruchamianie nowej wersji" in log.read_text(encoding="utf-8", errors="replace"):
                     Path(data["confirm_path"]).write_text(json.dumps(
                         {"version": data["target_version"], "pid": 1, "exe": "x"}), encoding="utf-8")
                     return
@@ -350,7 +352,7 @@ class WindowsHelperTests(unittest.TestCase):
         self.assertEqual((self.app / "_backup" / "_internal" / "lib.dll").read_text(), "v1")
         self.assertTrue((self.app / "_backup" / "PRZYWROC_POPRZEDNIA_WERSJE.cmd").exists())
         self.assertFalse((self.app / "_backup" / "ustawienia.json").exists())
-        for stage in ("Start aktualizacji", "Program zamkniety", "Wersja w metadanych", "Uruchomiono nowa wersje",
+        for stage in ("Start aktualizacji", "Program zamkniety", "Wersja w metadanych", "Uruchamianie nowej wersji",
                       "Potwierdzenie: uruchomiony program raportuje wersje", "zakonczona powodzeniem"):
             self.assertIn(stage, log)
 

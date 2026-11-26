@@ -217,6 +217,7 @@ try {
     # 3. Uruchomienie nowej wersji i potwierdzenie, ze raportuje nowa wersje
     if (Test-Path -LiteralPath $p.confirm_path) { Remove-Item -LiteralPath $p.confirm_path -Force }
     $started = $null
+    Log ("Uruchamianie nowej wersji: {0}" -f $exe)
     try { $started = Start-AsUser $exe @() } catch { Log ("BLAD uruchomienia nowej wersji: " + $_.Exception.Message) }
     if ($started) { Log ("Uruchomiono nowa wersje: {0} (pid {1})" -f $exe, $started.Id) }
     $confirmed = $null
