@@ -76,58 +76,142 @@ class UpdateDialog(QDialog):
         lay.addLayout(buttons)
 
 
-def run_update(parent, release: updater.Release, quit_app) -> None:
-    """Pobiera i rozpakowuje wydanie (w tle), uruchamia skrypt i zamyka program."""
-    target = updater.app_dir()
-    if not updater.can_write(target):
-        QMessageBox.warning(parent, APP_NAME, f"Brak uprawnień do zapisu w folderze programu:\n{target}\n\n"
-                                              "Przenieś folder programu w miejsce z prawem zapisu (np. Dokumenty) "
-                                              "albo pobierz nową wersję ręcznie.")
+def run_update(parent, release: updater.Release, install_and_restart) -> None:
+    """Pobiera i sprawdza wydanie w tle, potem pyta „Zainstaluj i uruchom ponownie”.
+
+    ``install_and_restart(prepared) -> bool`` – bezpiecznie kończy pracę programu i uruchamia
+    proces aktualizujący (MainWindow.install_update).
+    """
+    if not updater.is_frozen():
+        QMessageBox.information(parent, APP_NAME, "Program uruchomiono ze źródeł – automatyczna aktualizacja "
+                                                  "działa tylko w wersji przenośnej (.exe).")
         return
     dlg = QProgressDialog("Pobieranie aktualizacji…", "Anuluj", 0, 100, parent)
     dlg.setWindowTitle(APP_NAME)
     dlg.setWindowModality(Qt.WindowModality.WindowModal)
     dlg.setMinimumDuration(0)
+    dlg.setAutoClose(False)
+    dlg.setAutoReset(False)
     dlg.setValue(0)
     sig = _Progress(dlg)
-    cancelled = {"v": False}
-    dlg.canceled.connect(lambda: cancelled.update(v=True))
+    state = {"cancelled": False, "finished": False}
+
+    def on_cancel() -> None:
+        # QProgressDialog wysyła „canceled” także przy zamykaniu – po zakończeniu pobierania to nie anulowanie
+        if not state["finished"]:
+            state["cancelled"] = True
+
+    dlg.canceled.connect(on_cancel)
 
     def on_step(done: int, total: int) -> None:
         dlg.setMaximum(max(total, 1))
-        dlg.setValue(min(done, max(total, 1)))
+        dlg.setValue(min(done, max(total, 1) - 1))       # 100% dopiero po weryfikacji
         dlg.setLabelText(f"Pobieranie aktualizacji… {done / 1048576:.0f} z {total / 1048576:.0f} MB")
 
-    def on_done(script, result) -> None:
+    def on_done(prepared, error) -> None:
+        state["finished"] = True
         dlg.close()
-        if cancelled["v"]:
+        if prepared is None:
+            if state["cancelled"]:
+                updater.stage_log("Pobieranie anulowane przez użytkownika")
+                return
+            updater.stage_log(f"BŁĄD przygotowania aktualizacji: {error}")
+            _show_error(parent, "Aktualizacja nie powiodła się – program działa dalej w bieżącej wersji.", str(error))
             return
-        if script is None:
-            QMessageBox.warning(parent, APP_NAME, f"Aktualizacja nie powiodła się:\n{result}\n\n"
-                                                  "Program działa dalej w bieżącej wersji.")
-            return
-        try:
-            updater.launch_update_script(script, result, target)
-        except (OSError, updater.UpdateError) as exc:
-            QMessageBox.warning(parent, APP_NAME, f"Nie można uruchomić aktualizacji:\n{exc}")
-            return
-        quit_app()
+        ready = ReadyDialog(parent, prepared)
+        if ready.exec():
+            install_and_restart(prepared)
+        else:
+            updater.stage_log("Instalacja odłożona („Później”)")
 
     sig.step.connect(on_step)
     sig.done.connect(on_done)
 
     def progress(done: int, total: int) -> None:
-        if cancelled["v"]:
-            raise updater.UpdateError("Anulowano pobieranie.")
         sig.step.emit(done, total)
 
     def work() -> None:
         try:
-            script, new_dir = updater.prepare_update(release, progress)
-            sig.done.emit(script, new_dir)
+            prepared = updater.prepare_update(release, progress, cancelled=lambda: state["cancelled"])
+            sig.done.emit(prepared, None)
         except Exception as exc:          # błąd nie może zatrzymać programu
-            sig.done.emit(None, str(exc))
+            sig.done.emit(None, exc)
     threading.Thread(target=work, daemon=True).start()
+
+
+class ReadyDialog(QDialog):
+    """„Aktualizacja gotowa” – paczka pobrana i sprawdzona; instalacja dopiero na żądanie."""
+
+    def __init__(self, parent, prepared: updater.PreparedUpdate) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} – aktualizacja gotowa")
+        title = QLabel(f"<b>Aktualizacja gotowa: wersja {_esc(prepared.release.version)}</b>")
+        title.setTextFormat(Qt.TextFormat.RichText)
+        need_admin = not updater.can_write(updater.app_dir())
+        info = QLabel(
+            "Nowa wersja została pobrana i sprawdzona.\n\n"
+            "„Zainstaluj i uruchom ponownie” zapisze ustawienia, zamknie program, podmieni pliki w tym samym "
+            "folderze (z kopią zapasową w _backup) i uruchomi nową wersję. Ustawienia, katalog materiałów "
+            "i Twoje pliki pozostaną bez zmian."
+            + ("\n\nFolder programu wymaga uprawnień administratora – Windows poprosi o zgodę (UAC). "
+               "Bez zgody program uruchomi się ponownie w obecnej wersji." if need_admin else ""))
+        info.setTextFormat(Qt.TextFormat.PlainText)
+        info.setWordWrap(True)
+        self.btn_install = QPushButton("Zainstaluj i uruchom ponownie")
+        self.btn_install.setDefault(True)
+        self.btn_install.clicked.connect(self.accept)
+        later = QPushButton("Później")
+        later.clicked.connect(self.reject)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(later)
+        row.addWidget(self.btn_install)
+        lay = QVBoxLayout(self)
+        lay.addWidget(title)
+        lay.addWidget(info)
+        lay.addLayout(row)
+        self.resize(520, 220)
+
+
+def _show_error(parent, text: str, details: str) -> None:
+    box = QMessageBox(parent)
+    box.setWindowTitle(APP_NAME)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setTextFormat(Qt.TextFormat.PlainText)
+    box.setText(text)
+    box.setInformativeText(f"{details}\n\nDziennik: {updater.log_path()}")
+    log_btn = box.addButton("Otwórz log", QMessageBox.ButtonRole.ActionRole)
+    box.addButton("Zamknij", QMessageBox.ButtonRole.RejectRole)
+    box.exec()
+    if box.clickedButton() is log_btn:
+        open_log(parent)
+
+
+STATUS_TEXT = {
+    "uac_anulowano": "Anulowano zgodę administratora (UAC) – aktualizacja nie została zainstalowana.",
+    "brak_uprawnien": "Brak uprawnień do zapisu w folderze programu.",
+    "pliki_zablokowane": "Pliki programu były używane przez inny proces.",
+    "blad_kopii": "Nie udało się utworzyć kopii zapasowej – nic nie zmieniono.",
+    "blad_instalacji": "Błąd podczas kopiowania nowej wersji – przywrócono poprzednią.",
+    "zla_wersja": "Zainstalowany plik nie raportował nowej wersji – przywrócono poprzednią.",
+    "nowa_wersja_nie_dziala": "Nowa wersja nie uruchomiła się – przywrócono poprzednią.",
+    "brak_potwierdzenia": "Nowa wersja nie potwierdziła uruchomienia.",
+}
+
+
+def show_update_outcome(parent, outcome: updater.UpdateOutcome, status: str = "") -> None:
+    """Komunikat po ponownym uruchomieniu (nowa wersja albo przywrócona poprzednia)."""
+    if outcome.ok:
+        text = f"Zaktualizowano do wersji {outcome.target}."
+        if outcome.stale_shortcuts:
+            text += ("\n\nUwaga: te skróty wskazują inną kopię programu (nie zaktualizowaną):\n"
+                     + "\n".join(f"• {s}" for s in outcome.stale_shortcuts[:6]))
+            _show_error(parent, text, "Popraw skróty, aby uruchamiać zaktualizowany program.")
+            return
+        QMessageBox.information(parent, APP_NAME, text)
+        return
+    _show_error(parent, f"Aktualizacja do wersji {outcome.target} nie powiodła się – działa poprzednia wersja.",
+                STATUS_TEXT.get(status, "") + ("\n" if status in STATUS_TEXT else "") + outcome.message)
 
 
 class AboutDialog(QDialog):

@@ -322,6 +322,7 @@ class Catalog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._write_lock = threading.RLock()
+        self._all_conns: list[sqlite3.Connection] = []
         with self.conn() as c:
             c.executescript(SCHEMA)
 
@@ -334,6 +335,8 @@ class Catalog:
             c.execute("PRAGMA foreign_keys=ON")
             c.execute("PRAGMA synchronous=NORMAL")
             self._local.conn = c
+            with self._write_lock:
+                self._all_conns.append(c)
         return c
 
     def close(self) -> None:
@@ -341,6 +344,21 @@ class Catalog:
         if c is not None:
             c.close()
             self._local.conn = None
+
+    def close_all(self) -> None:
+        """Zamyka połączenia wszystkich wątków (przed zamknięciem programu / aktualizacją)."""
+        with self._write_lock:
+            conns, self._all_conns = self._all_conns, []
+        for c in conns:
+            try:
+                c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            except sqlite3.Error:
+                pass
+            try:
+                c.close()
+            except sqlite3.Error:
+                pass
+        self._local = threading.local()
 
     # Stan
     def get_state(self, key: str, default: str | None = None) -> str | None:
